@@ -16,13 +16,13 @@
 '''Stitches.
 
 Usage:
-  stitches [--grassdata=<path>] [[--skip=<task>]... [--force] | --only=<task>]
+  stitches [--gisdbase=<path>] [[--skip=<task>]... [--force] | --only=<task>]
            [--log=<path>] [--verbose] [--vars=<vars>] <config>
 
 Options:
   -h --help             Show this screen.
   -v --verbose          Show more output.
-  --grassdata=<path>    Alternative path to a grass database.
+  --gisdbase=<path>     Set path to the GRASS GIS Database.
   --log=<path>          Print GRASS's stdout at the end of run.
   --skip=<task>         Skip a task.
   --only=<task>         Run a single task.
@@ -41,11 +41,8 @@ import docopt
 import jinja2
 
 from .tasks import pipeline
-from .core import Error
 from .core import State
 from .core import Context
-from .core import SUCCESS
-from .core import FAIL
 from .core import TaskFatalEvent
 from .core import VerboseReporter
 from .core import SilentReporter
@@ -55,10 +52,6 @@ def main():
     args = docopt.docopt(__doc__)
 
     root = os.path.dirname(os.path.abspath(args['<config>']))
-
-    grassdata = args['--grassdata']
-    if not grassdata:
-        grassdata = os.path.join(root, 'grassdata')
 
     variables = {}
     if args['--vars']:
@@ -73,7 +66,9 @@ def main():
     reporter = SilentReporter()
     if args['--verbose']:
         reporter = VerboseReporter()
-    context = Context(state, state_path, grassdata, env, reporter=reporter)
+    context = Context(state, state_path, env,
+                      gisdbase=args['--gisdbase'],
+                      reporter=reporter)
 
     code = 0
     try:

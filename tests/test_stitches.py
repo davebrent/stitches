@@ -30,7 +30,7 @@ class Environment(object):
         self.root = tempfile.mkdtemp(
             prefix='stitches_',
             dir=os.path.dirname(__file__))
-        self.grassdata = os.path.join(self.root, 'grassdata')
+        self.gisdbase = os.path.join(self.root, 'grassdata')
 
     def close(self):
         shutil.rmtree(self.root, ignore_errors=False)
@@ -40,7 +40,8 @@ class Environment(object):
         with tempfile.NamedTemporaryFile(**fopts) as fp:
             fp.write(config)
             fp.flush()
-            returncode = subprocess.call(['stitches'] + opts + [fp.name])
+            returncode = subprocess.call(
+                ['stitches', '--gisdbase', self.gisdbase] + opts + [fp.name])
         return returncode
 
 
@@ -54,7 +55,6 @@ def env(request):
 def test_create_missing_location(env):
     '''The program should fail if the location is not specified.'''
     returncode = env.run(['--log', os.devnull], '''
-    [pipeline]
     ''')
     assert returncode == 1
 
@@ -62,41 +62,37 @@ def test_create_missing_location(env):
 def test_create_default_grassdb(env):
     '''A pipeline should use the PERMANENT mapset if not specified.'''
     returncode = env.run([], '''
-    [pipeline]
     location = 'foobar'
     ''')
     assert returncode == 0
-    assert os.path.isdir(os.path.join(env.grassdata))
-    assert os.path.isdir(os.path.join(env.grassdata, 'foobar'))
-    assert os.path.isdir(os.path.join(env.grassdata, 'foobar', 'PERMANENT'))
+    assert os.path.isdir(os.path.join(env.gisdbase))
+    assert os.path.isdir(os.path.join(env.gisdbase, 'foobar'))
+    assert os.path.isdir(os.path.join(env.gisdbase, 'foobar', 'PERMANENT'))
 
 
 @pytest.mark.skip(reason='should this case be supported?')
 def test_create_named_mapset(env):
     '''A pipeline should use the specified mapset.'''
     returncode = env.run(['--log', os.devnull], '''
-    [pipeline]
     location = 'foobar'
     mapset = 'blah'
     ''')
     assert returncode == 0
-    assert os.path.isdir(os.path.join(env.grassdata, 'foobar', 'blah'))
+    assert os.path.isdir(os.path.join(env.gisdbase, 'foobar', 'blah'))
 
 
 def test_create_variables(env):
     '''Passing variables on the command line.'''
     returncode = env.run(['--vars', 'myvar=baz'], '''
-    [pipeline]
     location = '{{ myvar }}'
     ''')
     assert returncode == 0
-    assert os.path.isdir(os.path.join(env.grassdata, 'baz'))
+    assert os.path.isdir(os.path.join(env.gisdbase, 'baz'))
 
 
 def test_tasks_grass_import(env):
     '''Importing with the grass task.'''
     returncode = env.run([], '''
-    [pipeline]
     location = 'foobar'
 
     [[tasks]]
@@ -108,7 +104,7 @@ def test_tasks_grass_import(env):
     args = {module='v.import', input='tests/point.geojson', output='mypoint'}
     ''')
     assert returncode == 0
-    with Session(gisdb=env.grassdata, location='foobar'):
+    with Session(gisdb=env.gisdbase, location='foobar'):
         maps = gcore.read_command(
             'g.list', type='vector', pattern='mypoint').splitlines()
         assert maps[0].decode('utf-8') == 'mypoint'
@@ -117,7 +113,6 @@ def test_tasks_grass_import(env):
 def test_tasks_python_func(env):
     '''Arbitrary python tasks.'''
     returncode = env.run([], '''
-    [pipeline]
     location = 'foobar'
 
     [[tasks]]
@@ -129,7 +124,6 @@ def test_tasks_python_func(env):
 def test_tasks_script_simple(env):
     '''Arbitrary script tasks.'''
     returncode = env.run([], '''
-    [pipeline]
     location = 'foobar'
 
     [[tasks]]
@@ -148,7 +142,6 @@ def test_tasks_composite_pipeline(env):
     '''
 
     config = '''
-    [pipeline]
     location = 'foobar'
 
     [[tasks]]
@@ -169,7 +162,7 @@ def test_tasks_composite_pipeline(env):
             'other={}'.format(os.path.basename(fp.name))
         ], config)
     assert returncode == 0
-    with Session(gisdb=env.grassdata, location='foobar'):
+    with Session(gisdb=env.gisdbase, location='foobar'):
         maps = gcore.read_command(
             'g.list', type='vector', pattern='mypoint').splitlines()
         assert maps[0].decode('utf-8') == 'mypoint'

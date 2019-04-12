@@ -31,20 +31,17 @@ def pipeline(context, params):
     template = context._jinja.get_template(name)
     config = toml.loads(template.render(variables))
 
-    if context.initial:
-        region_settings = config.get('pipeline', {})
-        if not region_settings:
-            raise Error('A stitches file must contain a pipeline definition')
-        mapset = region_settings.get('mapset')
-        location = region_settings.get('location', None)
-        if not location:
-            raise Error('A stitches file must contain [pipeline.location]')
+    gisdbase = config.get('gisdbase', context.gisdbase)
+    mapset = config.get('mapset')
+    location = config.get('location')
 
     if context.initial:
         context.initial = False
+        if not gisdbase or not location:
+            raise Error('Missing GISDBASE and Location parameters')
         # Create opts needs to be not None otherwise grass session will
         # not create the location automatically
-        with grass_session.Session(gisdb=context._grassdata,
+        with grass_session.Session(gisdb=gisdbase,
                                    location=location,
                                    mapset=mapset,
                                    create_opts=''):

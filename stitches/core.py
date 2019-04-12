@@ -229,11 +229,11 @@ class State(object):
 
 class Context(object):
 
-    def __init__(self, state, path, grassdata, jinja, resolvers=None,
-                 reporter=None):
+    def __init__(self, state, path, jinja,
+                 gisdbase=None, resolvers=None, reporter=None):
         self._path = path
         self._jinja = jinja
-        self._grassdata = grassdata
+        self.gisdbase = gisdbase
         self.stdout = StringIO()
         self.stderr = StringIO()
         self.initial = True

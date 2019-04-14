@@ -50,13 +50,13 @@ def pipeline(context, params):
         execute(context, config, **params)
 
 
-def grass(context, params):
+def grass(_, params):
     '''A task for calling GRASS modules.'''
     name = params.pop('module')
     module = Module(name)
     module(**params)
 
 
-def script(context, params):
+def script(_, params):
     '''A task for running an executable.'''
     subprocess.check_call(params)

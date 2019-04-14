@@ -19,37 +19,33 @@ from stitches import Context
 from stitches import Dependency
 from stitches import State
 from stitches import TaskHandler
-from stitches import Resolver
-from stitches import RUN
-from stitches import SKIP
-from stitches import planner
-from stitches import update
+from stitches import TaskStatus
+from stitches import prepass
+from stitches import advance
+from stitches import Platform
 
 from . import dummy_task
 
 
-class DummyResolver(Resolver):
+class TestPlatform(Platform):
     def __init__(self):
         self.value = 0
 
-    def status(self, _):
+    def file_mtime(self, path):
         return self.value
 
-    def compare(self, current, previous):
-        if current > previous:
-            return RUN
-        return SKIP
+    def file_exists(self, path):
+        return True
+
+    def map_exists(self, type_, name):
+        return True
 
 
 class PipelineTestState(object):
 
     def __init__(self):
         self.state = State()
-        self.context = Context(self.state, None, None, None, resolvers={
-            'fs': DummyResolver(),
-            'vector': DummyResolver(),
-            'raster': DummyResolver(),
-        })
+        self.context = Context(self.state, None, None, platform=TestPlatform())
         self.tasks = [
             TaskHandler({
                 'name': 'foo',
@@ -100,51 +96,51 @@ def test_dependency_definition():
 
 def test_pipeline_trivial_skip(env):
     '''A simple re-run of a pipeline should be skipped.'''
-    planner(env.context, env.tasks)
+    prepass(env.context, env.tasks)
     for task in env.tasks:
-        assert task.status == RUN
+        assert task.status == TaskStatus.RUN
     for task in env.tasks:
-        update(env.context, task)
-    planner(env.context, env.tasks)
+        advance(env.context, task)
+    prepass(env.context, env.tasks)
     for task in env.tasks:
-        assert task.status == SKIP
+        assert task.status == TaskStatus.SKIP
 
 
 def test_pipeline_root_file_change(env):
     '''Test file modified invalidating the pipeline.'''
-    planner(env.context, env.tasks)
+    prepass(env.context, env.tasks)
     for task in env.tasks:
-        assert task.status == RUN
+        assert task.status == TaskStatus.RUN
     for task in env.tasks:
-        update(env.context, task)
+        advance(env.context, task)
 
-    env.context.resolvers['fs'].value += 1
-    planner(env.context, env.tasks)
+    env.context.platform.value += 1
+    prepass(env.context, env.tasks)
     for task in env.tasks:
-        assert task.status == RUN
+        assert task.status == TaskStatus.RUN
 
     for task in env.tasks:
-        update(env.context, task)
-    planner(env.context, env.tasks)
+        advance(env.context, task)
+    prepass(env.context, env.tasks)
     for task in env.tasks:
-        assert task.status == SKIP
+        assert task.status == TaskStatus.SKIP
 
 
 def test_pipeline_root_arg_change(env):
     '''Test root task had a change of arguments.'''
-    planner(env.context, env.tasks)
+    prepass(env.context, env.tasks)
     for task in env.tasks:
-        assert task.status == RUN
+        assert task.status == TaskStatus.RUN
     for task in env.tasks:
-        update(env.context, task)
+        advance(env.context, task)
 
     env.tasks[0].options['args'] = 1337
-    planner(env.context, env.tasks)
+    prepass(env.context, env.tasks)
     for task in env.tasks:
-        assert task.status == RUN
+        assert task.status == TaskStatus.RUN
 
     for task in env.tasks:
-        update(env.context, task)
-    planner(env.context, env.tasks)
+        advance(env.context, task)
+    prepass(env.context, env.tasks)
     for task in env.tasks:
-        assert task.status == SKIP
+        assert task.status == TaskStatus.SKIP

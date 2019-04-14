@@ -20,7 +20,6 @@ import tempfile
 
 from grass_session import Session
 from grass.script import core as gcore
-
 import pytest
 
 

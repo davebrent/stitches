@@ -15,28 +15,20 @@
 
 from __future__ import print_function
 
+import collections
 import importlib
+import json
 try:
     from io import StringIO
 except ImportError:
     from StringIO import StringIO
-import json
 import os
 import sys
-import traceback
 
 import colorful
-import toml
 from grass.script import core as gcore
+import toml
 import wurlitzer
-
-
-SKIP = 'skip'
-RUN = 'run'
-FAIL = 'fail'
-FATAL = 'fatal'
-SUCCESS = 'success'
-UNKNOWN = 'unknown'
 
 
 class Error(Exception):
@@ -149,56 +141,20 @@ class Dependency(object):
         return self._spec
 
 
-class Resolver(object):
+class Platform(object):
 
-    def status(self, dependency):
-        '''Return a status (ie primitive value) for a dependency.'''
-        raise NotImplementedError()
+    def file_mtime(self, path):
+        return os.stat(path).st_mtime
 
-    def compare(self, current, previous):
-        '''Compare results returned by `status` for if the task should run.'''
-        raise NotImplementedError()
+    def file_exists(self, path):
+        return os.path.exists(path)
 
-
-class MTimeResolver(Resolver):
-    '''Resolver based on last modified times.
-
-    The last modified time is used by default, due to the usual size of
-    geographic data sets. If the current time is more recent then the task may
-    be resolved to run.
-    '''
-
-    def status(self, dependency):
-        try:
-            return os.stat(dependency.path).st_mtime
-        except OSError:
-            raise Exception('File does not exist')
-
-    def compare(self, current, previous):
-        if current > previous:
-            return RUN
-        return SKIP
-
-
-class GrassResolver(Resolver):
-    '''Grass map resolver.
-
-    Without being able to compare grass datasets, the best the resolver can do
-    in isolation, is, determine that the map currently exists and signal an
-    unknown state.
-    '''
-
-    def status(self, dependency):
+    def map_exists(self, type_, name):
         res = gcore.read_command(
-            'g.list',
-            type=dependency.type,
-            pattern=dependency.name).splitlines()
-        if res and res[0].decode('utf-8') == dependency.name:
+            'g.list', type=type_, pattern=name).splitlines()
+        if res and res[0].decode('utf-8') == name:
             return True
-        raise Exception('Map {} does not exist'.format(dependency.name))
-
-    def compare(self, current, previous):
-        return UNKNOWN
+        return False
 
 
 class State(object):
@@ -207,8 +163,8 @@ class State(object):
     TODO: Try and store this is a sqlite table in the grass region.
     '''
 
-    def __init__(self, dependencies=None):
-        self.dependencies = dependencies or {}
+    def __init__(self, history=None):
+        self.history = collections.defaultdict(dict, **(history or {}))
 
     @classmethod
     def load(cls, path):
@@ -221,7 +177,7 @@ class State(object):
 
     def save(self, path):
         serialized = toml.dumps({
-            'dependencies': self.dependencies,
+            'history': self.history,
         })
         with open(path, 'w') as fp:
             fp.write(serialized)
@@ -230,7 +186,7 @@ class State(object):
 class Context(object):
 
     def __init__(self, state, path, jinja,
-                 gisdbase=None, resolvers=None, reporter=None):
+                 gisdbase=None, platform=None, reporter=None):
         self._path = path
         self._jinja = jinja
         self.gisdbase = gisdbase
@@ -238,14 +194,8 @@ class Context(object):
         self.stderr = StringIO()
         self.initial = True
         self.state = state
-        if reporter is None:
-            reporter = SilentReporter()
-        self.reporter = reporter
-        self.resolvers = resolvers or {
-            'fs': MTimeResolver(),
-            'vector': GrassResolver(),
-            'raster': GrassResolver(),
-        }
+        self.reporter = reporter if reporter else SilentReporter()
+        self.platform = platform if platform else Platform()
 
     def save(self):
         self.state.save(self._path)
@@ -267,167 +217,217 @@ class TaskHandler(object):
         self.inputs = [Dependency(d) for d in options.get('inputs', [])]
         self.outputs = [Dependency(d) for d in options.get('outputs', [])]
 
-    def __call__(self):
-        return self.task()
+
+class InputStatus(object):
+    CHANGE = 'change'
+    NOCHANGE = 'nochange'
+    FAIL = 'fail'
+    UNKNOWN = 'unknown'
 
 
-def planner(context, tasks, skip=None, force=None, only=None):
-    '''Plan task execution, determine which tasks may be skipped.
+class TaskStatus(object):
+    RUN = 'run'
+    SKIP = 'skip'
+    FAIL = 'fail'
 
-    This function may only mutate the state of the `status` and `reason`
-    attributes of each task. The skipping algorithm is as follows:
 
-    - A tasks configuration is hashed and used as a key to a set of previously
-      exectuted tasks (across all pipline runs)
-    - If the hash is not present, then task is simply run.
-    - If the tasks outputs do not yet exist, then the task is run.
-    - If the task has grass inputs, check the tasks that create them, if they
-      weren't skipped, then the task is run (modified times again maybe?)
-    - If the task has file inputs, check the last seen modified time for this
-      task, if they are different run the task
-    - Otherwise, the task is skipped.
-    '''
-    created = {}
-    def push_task(i, task):
-        # Map of which task last created which dependency
-        # 'type/foo@bar': <task_id>
-        for dependency in task.outputs:
-            created[dependency.fmt()] = i
+class PlannerContext(object):
+    '''Context that lives during input resolution.'''
+    def __init__(self, context, tasks, skip, force, only):
+        self.context = context
+        self.tasks = tasks
+        self.force = force
+        self.skip = skip
+        self.only = only
+        self.created = {}
+        self.task = None
+        self.index = None
 
-    for (i, task) in enumerate(tasks):
-        # This needs to be a string for uniform serializing and deserializing
-        # to json or toml (as a key it will be coerced into a string, but
-        # created as a number)
-        task.hash = str(hash(json.dumps(task.options, sort_keys=True)))
-        meta = context.state.dependencies.get(task.hash, None)
-        if not meta:
-            context.state.dependencies[task.hash] = dict(inputs={}, outputs={})
+    def __iter__(self):
+        for (i, task) in enumerate(self.tasks):
+            self.task = task
+            self.index = i
+            yield task
+            for dependency in task.outputs:
+                self.created[dependency.fmt()] = i
 
-        # First test the only, force & skip now the task hash is set
-        if force is not None:
-            task.status = RUN
-            task.reason = 'task forced to run'
-            continue
-        if only is not None:
-            if '{}'.format(i) == only:
-                task.status = RUN
-                task.reason = 'task specified as "only" task'
-            else:
-                task.status = SKIP
-                task.reason = 'task does not match "only"'
-            continue
-        if skip is not None:
-            if '{}'.format(i) in skip:
-                task.status = SKIP
-                task.reason = 'task matched "skip"'
-                continue
 
-        if not meta:
-            task.status = RUN
-            task.reason = 'task options have been changed or unseen'
-            push_task(i, task)
-            continue
-
-        exit_ = False
-        for dependency in task.outputs:
-            resolver = context.resolvers.get(dependency.type)
-            try:
-                status = resolver.status(dependency)
-            except Exception:
-                exit_ = True
-                task.status = RUN
-                task.reason = 'Task output "{}" does not exist'.format(
-                    dependency.fmt())
-                break
-        if exit_:
-            push_task(i, task)
-            continue
-
-        skips = 0
-        for dependency in task.inputs:
-            resolver = context.resolvers.get(dependency.type)
-            exit_inner = False
-            try:
-                status = resolver.status(dependency)
-            except Exception:
-                exit_inner = True
-                task.status = FAIL
-                task.reason = 'task input "{}" does not exist'.format(
-                    dependency.fmt())
-                break
-            if exit_inner:
-                break
-
-            # Hashes may collide and this specific task may not have actually
-            # been seen before, so its input deps may not exist in `meta`
-            depkey = dependency.fmt()
-            previous = meta['inputs'].get(depkey, None)
-            if previous is None:
-                task.status = RUN
-                task.reason = 'task input "{}" hasnt been seen'.format(
-                    dependency.fmt())
-                break
-
-            # Resolvers can always determine if a task can be run, but not if
-            # they can be safely skipped
-            if resolver.compare(status, previous) == RUN:
-                exit_ = True
-                task.status = RUN
-                task.reason = 'task input "{}" has been modified'.format(
-                    dependency.fmt())
-                break
-
-            # File system dependencies can be safely skipped at this point
-            # Grass maps are still an unknown
-            if dependency.type == Dependency.FS:
-                skips += 1
-                task.status = SKIP
-                push_task(i, task)
-                continue
-
-            parent = created.get(depkey, None)
-            if parent is None:
-                task.status = RUN
-                task.reason = 'unable to determine status of "{}"'.format(
-                    dependency.fmt())
-                break
-
-            parent = tasks[parent]
-            if parent.status == SKIP:
-                # The task that created this dependency was skipped, so we are
-                # closer to skipping this task
-                skips += 1
-
-        if task.status == RUN:
-            push_task(i, task)
-            continue
-
-        if skips != 0 and skips == len(task.inputs):
-            task.status = SKIP
-            task.reason = 'dependencies are all up to date'
+def decision(test=None, true=None, false=None, result=None):
+    '''A function to build up a decision tree.'''
+    if test is not None:
+        assert true and false
+    def wrapper(*args, **kwargs):
+        if test is not None:
+            if test(*args, **kwargs):
+                return true(*args, **kwargs)
+            return false(*args, **kwargs)
         else:
-            task.status = RUN
-            task.reason = 'dependencies are not up to date or are unknown'
-
-        push_task(i, task)
+            return result
+    return wrapper
 
 
-def update(context, task):
-    '''When a task is successfully run, its meta data needs to be updated.'''
-    # This needs to remove old dependencies from meta to keep the data fresh
-    task.status = None
-    task.reason = None
-    meta = context.state.dependencies[task.hash]
+def _is_grass_map(planner, dep):
+    '''Returns true if the dependency is a grass map.'''
+    return dep.type == Dependency.VECTOR or dep.type == Dependency.RASTER
 
-    for dependency in task.outputs:
-        depkey = dependency.fmt()
-        resolver = context.resolvers.get(dependency.type)
-        meta['outputs'][depkey] = resolver.status(dependency)
 
+def _grass_map_exists(planner, dep):
+    '''Returns true if the grass map exists.'''
+    return planner.context.platform.map_exists(dep.type, dep.name)
+
+
+def _creator_visible(planner, dep):
+    '''Returns true if the creator of the map is visible in the pipeline.'''
+    parent = planner.created.get(dep.fmt())
+    return False if parent is None else True
+
+
+def _creator_changed(planner, dep):
+    '''Returns true if the creator of a map has changed.'''
+    parent = planner.tasks[planner.created[dep.fmt()]]
+    return parent.status != TaskStatus.SKIP
+
+
+def _is_file(planner, dep):
+    '''Returns true if the dependency is a file.'''
+    return dep.type == Dependency.FS
+
+
+def _file_exists(planner, dep):
+    '''Returns true if the file exists.'''
+    return planner.context.platform.file_exists(dep.path)
+
+
+def _file_has_previous(planner, dep):
+    '''Returns true if the task has seen the file before.'''
+    history = planner.context.state.history[planner.task.hash]
+    return dep.fmt() in history
+
+
+def _file_mtime_recent(planner, dep):
+    '''Returns true if a file has been more recently modified.'''
+    history = planner.context.state.history[planner.task.hash]
+    previous = history[dep.fmt()]
+    current = planner.context.platform.file_mtime(dep.path)
+    if current > previous:
+        return True
+    return False
+
+
+_input_decision_tree = decision(
+    test=_is_grass_map,
+    true=decision(
+        test=_grass_map_exists,
+        true=decision(
+            test=_creator_visible,
+            true=decision(
+                test=_creator_changed,
+                true=decision(result=InputStatus.CHANGE),
+                false=decision(result=InputStatus.NOCHANGE),
+            ),
+            false=decision(result=InputStatus.UNKNOWN),
+        ),
+        false=decision(result=InputStatus.FAIL)
+    ),
+    false=decision(
+        test=_is_file,
+        true=decision(
+            test=_file_exists,
+            true=decision(
+                test=_file_has_previous,
+                true=decision(
+                    test=_file_mtime_recent,
+                    true=decision(result=InputStatus.CHANGE),
+                    false=decision(result=InputStatus.NOCHANGE),
+                ),
+                false=decision(result=InputStatus.CHANGE)
+            ),
+            false=decision(result=InputStatus.FAIL)
+        ),
+        false=decision(result=InputStatus.FAIL)
+    )
+)
+
+
+_task_decision_tree = decision(
+    test=lambda p, _: p.force,
+    true=decision(result=TaskStatus.RUN),
+    false=decision(
+        test=lambda p, _: p.only is not None,
+        true=decision(
+            test=lambda p, _: '{}'.format(p.index) == p.only,
+            true=decision(result=TaskStatus.RUN),
+            false=decision(result=TaskStatus.SKIP),
+        ),
+        false=decision(
+            test=lambda p, _: p.skip is not None,
+            true=decision(
+                test=lambda p, _: '{}'.format(p.index) in p.skip,
+                true=decision(result=TaskStatus.SKIP),
+                false=decision(result=None)
+            ),
+            false=decision(result=None)
+        )
+    )
+)
+
+
+def prepass(context, tasks, skip=None, force=None, only=None):
+    '''Setup task execution, sets task status.'''
+    # Assign each task an id and create an entry in the history
+    hashids = set()
+    for task in tasks:
+        task.hash = str(hash(json.dumps(task.options, sort_keys=True)))
+        hashids.add(task.hash)
+
+    # Filter out non-existant tasks
+    keys = list(context.state.history.keys())
+    for hashid in keys:
+        if hashid not in hashids:
+            del context.state.history[hashid]
+
+    # Create a status for each task
+    planner = PlannerContext(context, tasks, skip, force, only)
+    for task in planner:
+        task.status = _task_decision_tree(planner, task)
+        if task.status:
+            continue
+
+        if task.hash not in context.state.history:
+            task.status = TaskStatus.RUN
+            task.reason = 'New task'
+            continue
+
+        failures = []
+        unknowns = []
+        result = TaskStatus.SKIP
+
+        for dependency in task.inputs:
+            status = _input_decision_tree(planner, dependency)
+            if status == InputStatus.FAIL:
+                failures.append(dependency)
+            elif status == InputStatus.UNKNOWN:
+                unknowns.append(dependency)
+            elif status == InputStatus.CHANGE:
+                result = TaskStatus.RUN
+
+        if failures:
+            task.status = TaskStatus.FAIL
+            task.reason = 'Failed to resolve dependencies'
+        elif unknowns:
+            task.status = TaskStatus.RUN
+            task.reason = 'Unknown sources for dependencies'
+        else:
+            task.status = result
+
+
+def advance(context, task):
+    '''Advance state with the result a task.'''
+    history = context.state.history[task.hash]
     for dependency in task.inputs:
-        depkey = dependency.fmt()
-        resolver = context.resolvers.get(dependency.type)
-        meta['inputs'][depkey] = resolver.status(dependency)
+        if dependency.type == Dependency.FS:
+            history[dependency.fmt()] = context.platform.file_mtime(
+                dependency.path)
 
 
 def execute(context, config, force=False, skip=None, only=None):
@@ -452,24 +452,24 @@ def execute(context, config, force=False, skip=None, only=None):
         tasks.append(TaskHandler(options, function))
 
     # Plan the task execution, work out which tasks may be skipped etc.
-    planner(context, tasks, force=force, skip=skip, only=only)
+    prepass(context, tasks, force=force, skip=skip, only=only)
 
     for (i, task) in enumerate(tasks):
         message = task.options.get('message', '')
         context.reporter(TaskStartEvent(i, message))
 
-        if task.status == SKIP:
+        if task.status == TaskStatus.SKIP:
             context.reporter(TaskSkipEvent(i))
             continue
-        elif task.status == FAIL:
+        elif task.status == TaskStatus.FAIL:
             raise Error(task.reason)
-        elif task.status == RUN:
+        elif task.status == TaskStatus.RUN:
             # Exceptions are deliberately not caught here to avoid any
             # complications with nested pipelines & losing a useful stacktrace.
             # They are instead to propogate to the caller of the first pipeline
             with wurlitzer.pipes(stdout=context.stdout,
                                  stderr=context.stderr):
                 task.function(context, task.options.get('args'))
-            update(context, task)
+            advance(context, task)
             context.save()
             context.reporter(TaskCompleteEvent(i))

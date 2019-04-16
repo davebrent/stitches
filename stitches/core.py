@@ -307,7 +307,9 @@ def _file_has_previous(planner, dep):
 def _file_mtime_recent(planner, dep):
     '''Returns true if a file has been more recently modified.'''
     history = planner.context.state.history[planner.task.hash]
-    previous = history[dep.fmt()]
+    # Offset was picked, using trial and error from an actual case of where the
+    # floating point comparison caused a problem
+    previous = history[dep.fmt()] + 0.000001
     current = planner.context.platform.file_mtime(dep.path)
     if current > previous:
         return True

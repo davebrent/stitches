@@ -194,18 +194,21 @@ class State(object):
 
 class Context(object):
 
-    def __init__(self, state, path, jinja,
-                 gisdbase=None, platform=None, reporter=None):
-        self._path = path
+    def __init__(self, jinja, gisdbase=None, platform=None, reporter=None):
+        self._path = None
         self._jinja = jinja
         self.gisdbase = gisdbase
         self.stdout = StringIO()
         self.stderr = StringIO()
         self.initial = True
-        self.state = state
+        self.state = None
         self.stack = []
         self.reporter = reporter if reporter else SilentReporter()
         self.platform = platform if platform else Platform()
+
+    def init(self, path):
+        self._path = path
+        self.state = State.load(self._path)
 
     def save(self):
         self.state.save(self._path)

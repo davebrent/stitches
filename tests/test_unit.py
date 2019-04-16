@@ -13,6 +13,8 @@
 # You should have received a copy of the GNU General Public License
 # along with Stitches. If not, see <https://www.gnu.org/licenses/>.
 
+import tempfile
+
 import pytest
 
 from stitches import Context
@@ -27,7 +29,7 @@ from stitches import Platform
 from . import dummy_task
 
 
-class TestPlatform(Platform):
+class PlatformTest(Platform):
     def __init__(self):
         self.value = 0
 
@@ -44,8 +46,8 @@ class TestPlatform(Platform):
 class PipelineTestState(object):
 
     def __init__(self):
-        self.state = State()
-        self.context = Context(self.state, None, None, platform=TestPlatform())
+        self.context = Context(None, platform=PlatformTest())
+        self.context.init(tempfile.mktemp())
         self.tasks = [
             TaskHandler({
                 'name': 'foo',

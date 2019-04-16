@@ -13,6 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with Stitches. If not, see <https://www.gnu.org/licenses/>.
 
+import os
 import subprocess
 
 import toml
@@ -21,6 +22,7 @@ from grass.pygrass.modules import Module
 
 from .core import Error
 from .core import execute
+from .core import State
 
 
 def pipeline(context, params):
@@ -39,6 +41,9 @@ def pipeline(context, params):
         context.initial = False
         if not gisdbase or not location:
             raise Error('Missing GISDBASE and Location parameters')
+        context.init(os.path.join(
+            gisdbase, location, mapset or 'PERMANENT', 'stitches.state.toml'
+        ))
         # Create opts needs to be not None otherwise grass session will
         # not create the location automatically
         with grass_session.Session(gisdb=gisdbase,

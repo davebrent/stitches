@@ -41,7 +41,6 @@ import docopt
 import jinja2
 
 from .tasks import pipeline
-from .core import State
 from .core import Context
 from .core import TaskFatalEvent
 from .core import VerboseReporter
@@ -60,15 +59,10 @@ def main():
             variables[name] = value
 
     env = jinja2.Environment(loader=jinja2.FileSystemLoader(root))
-    state_path = os.path.join(root, 'stitches.state.toml')
-    state = State.load(state_path)
-
     reporter = SilentReporter()
     if args['--verbose']:
         reporter = VerboseReporter()
-    context = Context(state, state_path, env,
-                      gisdbase=args['--gisdbase'],
-                      reporter=reporter)
+    context = Context(env, gisdbase=args['--gisdbase'], reporter=reporter)
 
     code = 0
     try:

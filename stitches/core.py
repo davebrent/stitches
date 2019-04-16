@@ -41,23 +41,27 @@ class Error(Exception):
 
 
 class TaskStartEvent(object):
-    def __init__(self, index, description):
+    def __init__(self, stack, index, description):
+        self.stack = stack
         self.index = index
         self.description = description
 
 
 class TaskCompleteEvent(object):
-    def __init__(self, index):
+    def __init__(self, stack, index):
+        self.stack = stack
         self.index = index
 
 
 class TaskSkipEvent(object):
-    def __init__(self, index):
+    def __init__(self, stack, index):
+        self.stack = stack
         self.index = index
 
 
 class TaskFatalEvent(object):
-    def __init__(self, traceback):
+    def __init__(self, stack, traceback):
+        self.stack = stack
         self.traceback = traceback
 
 
@@ -88,16 +92,21 @@ class VerboseReporter(object):
 
     def __call__(self, event):
         if isinstance(event, TaskStartEvent):
-            print('{c.bold}[{}]: {}{c.reset}'.format(
+            indent = ' ' * (len(event.stack) * 2)
+            print('{}{c.bold}[{}]: {}{c.reset}'.format(
+                indent,
                 event.index,
                 event.description,
                 c=colorful))
         elif isinstance(event, TaskSkipEvent):
-            print('  {c.orange}Skipped{c.reset}'.format(c=colorful))
+            indent = ' ' * (len(event.stack) * 2)
+            print('{}  {c.orange}Skipped{c.reset}'.format(indent, c=colorful))
         elif isinstance(event, TaskCompleteEvent):
-            print('  {c.green}Completed{c.reset}'.format(c=colorful))
+            indent = ' ' * (len(event.stack) * 2)
+            print('{}  {c.green}Completed{c.reset}'.format(indent, c=colorful))
         elif isinstance(event, TaskFatalEvent):
-            lines = ['  {c.red}{}{c.reset}'.format(line, c=colorful)
+            indent = ' ' * (len(event.stack) * 2)
+            lines = ['{}  {c.red}{}{c.reset}'.format(indent, line, c=colorful)
                      for line in event.traceback.splitlines()]
             for line in lines:
                 print(line, file=sys.stderr)
@@ -194,6 +203,7 @@ class Context(object):
         self.stderr = StringIO()
         self.initial = True
         self.state = state
+        self.stack = []
         self.reporter = reporter if reporter else SilentReporter()
         self.platform = platform if platform else Platform()
 
@@ -458,20 +468,26 @@ def execute(context, config, force=False, skip=None, only=None):
 
     for (i, task) in enumerate(tasks):
         message = task.options.get('message', '')
-        context.reporter(TaskStartEvent(i, message))
+        context.reporter(TaskStartEvent(list(context.stack), i, message))
 
         if task.status == TaskStatus.SKIP:
-            context.reporter(TaskSkipEvent(i))
+            context.reporter(TaskSkipEvent(list(context.stack), i))
             continue
         elif task.status == TaskStatus.FAIL:
             raise Error(task.reason)
         elif task.status == TaskStatus.RUN:
+            context.stack.append(i)
+            logged = getattr(task.function, 'logged', True)
             # Exceptions are deliberately not caught here to avoid any
             # complications with nested pipelines & losing a useful stacktrace.
             # They are instead to propogate to the caller of the first pipeline
-            with wurlitzer.pipes(stdout=context.stdout,
-                                 stderr=context.stderr):
+            if logged:
+                with wurlitzer.pipes(stdout=context.stdout,
+                                     stderr=context.stderr):
+                    task.function(context, task.options.get('args'))
+            else:
                 task.function(context, task.options.get('args'))
             advance(context, task)
             context.save()
-            context.reporter(TaskCompleteEvent(i))
+            context.stack.pop()
+            context.reporter(TaskCompleteEvent(list(context.stack), i))

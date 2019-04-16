@@ -50,6 +50,9 @@ def pipeline(context, params):
         execute(context, config, **params)
 
 
+pipeline.logged = False
+
+
 def grass(_, params):
     '''A task for calling GRASS modules.'''
     name = params.pop('module')

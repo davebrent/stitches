@@ -81,7 +81,7 @@ def main():
         })
     except Exception:  # pylint: disable=broad-except
         stack_trace = traceback.format_exc()
-        context.reporter(TaskFatalEvent(stack_trace))
+        context.reporter(TaskFatalEvent(list(context.stack), stack_trace))
         if not args['--log']:
             uniq = datetime.datetime.now().strftime('%H_%M_%S_%f')
             args['--log'] = 'stitches.grass-{}.log'.format(uniq)

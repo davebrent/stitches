@@ -39,9 +39,14 @@ class Environment(object):
         with tempfile.NamedTemporaryFile(**fopts) as fp:
             fp.write(config)
             fp.flush()
-            returncode = subprocess.call(
-                ['stitches', '--gisdbase', self.gisdbase] + opts + [fp.name])
-        return returncode
+            cmd = ['stitches', '--gisdbase', self.gisdbase] + opts + [fp.name]
+            proc = subprocess.Popen(cmd,
+                                    stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE)
+            (out, err) = proc.communicate()
+            returncode = proc.returncode
+        return (returncode, out.decode('utf-8'), err.decode('utf-8'))
 
 
 @pytest.fixture
@@ -53,14 +58,14 @@ def env(request):
 
 def test_create_missing_location(env):
     '''The program should fail if the location is not specified.'''
-    returncode = env.run(['--log', os.devnull], '''
+    returncode, _, _ = env.run(['--log', os.devnull], '''
     ''')
     assert returncode == 1
 
 
 def test_create_default_grassdb(env):
     '''A pipeline should use the PERMANENT mapset if not specified.'''
-    returncode = env.run([], '''
+    returncode, _, _ = env.run([], '''
     location = 'foobar'
     ''')
     assert returncode == 0
@@ -72,7 +77,7 @@ def test_create_default_grassdb(env):
 @pytest.mark.skip(reason='should this case be supported?')
 def test_create_named_mapset(env):
     '''A pipeline should use the specified mapset.'''
-    returncode = env.run(['--log', os.devnull], '''
+    returncode, _, _ = env.run(['--log', os.devnull], '''
     location = 'foobar'
     mapset = 'blah'
     ''')
@@ -82,7 +87,7 @@ def test_create_named_mapset(env):
 
 def test_create_variables(env):
     '''Passing variables on the command line.'''
-    returncode = env.run(['--vars', 'myvar=baz'], '''
+    returncode, _, _ = env.run(['--vars', 'myvar=baz'], '''
     location = '{{ myvar }}'
     ''')
     assert returncode == 0
@@ -91,7 +96,7 @@ def test_create_variables(env):
 
 def test_tasks_grass_import(env):
     '''Importing with the grass task.'''
-    returncode = env.run([], '''
+    returncode, _, _ = env.run([], '''
     location = 'foobar'
 
     [[tasks]]
@@ -111,7 +116,7 @@ def test_tasks_grass_import(env):
 
 def test_tasks_python_func(env):
     '''Arbitrary python tasks.'''
-    returncode = env.run([], '''
+    returncode, _, _ = env.run([], '''
     location = 'foobar'
 
     [[tasks]]
@@ -122,7 +127,7 @@ def test_tasks_python_func(env):
 
 def test_tasks_script_simple(env):
     '''Arbitrary script tasks.'''
-    returncode = env.run([], '''
+    returncode, _, _ = env.run([], '''
     location = 'foobar'
 
     [[tasks]]
@@ -156,7 +161,7 @@ def test_tasks_composite_pipeline(env):
     with tempfile.NamedTemporaryFile(**fopts) as fp:
         fp.write(other)
         fp.flush()
-        returncode = env.run([
+        returncode, _, _ = env.run([
             '--vars',
             'other={}'.format(os.path.basename(fp.name))
         ], config)
@@ -165,3 +170,45 @@ def test_tasks_composite_pipeline(env):
         maps = gcore.read_command(
             'g.list', type='vector', pattern='mypoint').splitlines()
         assert maps[0].decode('utf-8') == 'mypoint'
+
+
+def test_tasks_composite_pipeline_output(env):
+    '''Composing pipelines.'''
+    other = '''
+    [[tasks]]
+    task = 'grass'
+    message = 'c'
+    args = {module='v.import', input='tests/point.geojson', output='mypoint'}
+    '''
+
+    config = '''
+    location = 'foobar'
+
+    [[tasks]]
+    task = 'grass'
+    message = 'a'
+    args = {module='g.proj', c=true, proj4='+proj=utm +zone=33 +datum=WGS84'}
+
+    [[tasks]]
+    task = 'pipeline'
+    message = 'b'
+    args = {name='{{ other }}'}
+    '''
+
+    fopts = dict(mode='w', dir=env.root, prefix='config_', suffix='.toml')
+    with tempfile.NamedTemporaryFile(**fopts) as fp:
+        fp.write(other)
+        fp.flush()
+        returncode, output, _ = env.run([
+            '--verbose',
+            '--vars',
+            'other={}'.format(os.path.basename(fp.name))
+        ], config)
+    assert returncode == 0
+    assert output == '''[0]: a
+  Completed
+[1]: b
+  [0]: c
+    Completed
+  Completed
+'''

@@ -205,6 +205,7 @@ class Context(object):
         self.stack = []
         self.reporter = reporter if reporter else SilentReporter()
         self.platform = platform if platform else Platform()
+        self.hashids = set()
 
     def init(self, path):
         self._path = path
@@ -390,15 +391,14 @@ _task_decision_tree = decision(
 def prepass(context, tasks, skip=None, force=None, only=None):
     '''Setup task execution, sets task status.'''
     # Assign each task an id and create an entry in the history
-    hashids = set()
     for task in tasks:
         task.hash = str(hash(json.dumps(task.options, sort_keys=True)))
-        hashids.add(task.hash)
+        context.hashids.add(task.hash)
 
     # Filter out non-existant tasks
     keys = list(context.state.history.keys())
     for hashid in keys:
-        if hashid not in hashids:
+        if hashid not in context.hashids:
             del context.state.history[hashid]
 
     # Create a status for each task

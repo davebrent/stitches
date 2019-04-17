@@ -212,3 +212,49 @@ def test_tasks_composite_pipeline_output(env):
     Completed
   Completed
 '''
+
+
+def test_tasks_composite_pipeline_retained_state(env):
+    '''Composing pipelines.'''
+    other = '''
+    [[tasks]]
+    task = 'grass'
+    message = 'c'
+    args = {module='v.import', input='tests/point.geojson', output='mypoint'}
+    '''
+
+    config = '''
+    location = 'foobar'
+
+    [[tasks]]
+    task = 'grass'
+    message = 'a'
+    args = {module='g.proj', c=true, proj4='+proj=utm +zone=33 +datum=WGS84'}
+
+    [[tasks]]
+    task = 'pipeline'
+    message = 'b'
+    args = {name='{{ other }}'}
+    '''
+
+    fopts = dict(mode='w', dir=env.root, prefix='config_', suffix='.toml')
+    with tempfile.NamedTemporaryFile(**fopts) as fp:
+        fp.write(other)
+        fp.flush()
+        returncode, _, _ = env.run([
+            '--verbose',
+            '--vars',
+            'other={}'.format(os.path.basename(fp.name))
+        ], config)
+        assert returncode == 0
+        returncode, output, _ = env.run([
+            '--verbose',
+            '--vars',
+            'other={}'.format(os.path.basename(fp.name))
+        ], config)
+        assert returncode == 0
+        assert output == '''[0]: a
+  Skipped
+[1]: b
+  Skipped
+'''

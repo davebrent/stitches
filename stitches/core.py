@@ -16,6 +16,7 @@
 from __future__ import print_function
 
 import collections
+import copy
 import importlib
 import json
 try:
@@ -391,8 +392,12 @@ _task_decision_tree = decision(
 def prepass(context, tasks, skip=None, force=None, only=None):
     '''Setup task execution, sets task status.'''
     # Assign each task an id and create an entry in the history
+    non_contributing = ['message']
     for task in tasks:
-        task.hash = str(hash(json.dumps(task.options, sort_keys=True)))
+        options = copy.deepcopy(task.options)
+        for name in non_contributing:
+            options.pop(name, None)
+        task.hash = str(hash(json.dumps(options, sort_keys=True)))
         context.hashids.add(task.hash)
 
     # Filter out non-existant tasks

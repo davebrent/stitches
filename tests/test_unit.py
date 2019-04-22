@@ -146,3 +146,15 @@ def test_pipeline_root_arg_change(env):
     prepass(env.context, env.tasks)
     for task in env.tasks:
         assert task.status == TaskStatus.SKIP
+
+
+def test_pipeline_non_contributing_change(env):
+    '''Test change of non-contributing keys.'''
+    prepass(env.context, env.tasks)
+    for task in env.tasks:
+        assert task.status == TaskStatus.RUN
+        advance(env.context, task)
+    env.tasks[0].options['message'] = 'blah'
+    prepass(env.context, env.tasks)
+    for task in env.tasks:
+        assert task.status == TaskStatus.SKIP

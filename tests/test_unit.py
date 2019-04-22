@@ -158,3 +158,16 @@ def test_pipeline_non_contributing_change(env):
     prepass(env.context, env.tasks)
     for task in env.tasks:
         assert task.status == TaskStatus.SKIP
+
+
+def test_pipeline_always_task(env):
+    '''Test always runnable task.'''
+    for task in env.tasks:
+        task.options['always'] = True
+    prepass(env.context, env.tasks)
+    for task in env.tasks:
+        assert task.status == TaskStatus.RUN
+        advance(env.context, task)
+    prepass(env.context, env.tasks)
+    for task in env.tasks:
+        assert task.status == TaskStatus.RUN

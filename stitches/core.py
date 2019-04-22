@@ -331,6 +331,11 @@ def _file_mtime_recent(planner, dep):
     return False
 
 
+def _task_always(planner, task):
+    '''Return true if the task is marked as "always".'''
+    return task.options.get('always', False)
+
+
 _input_decision_tree = decision(
     test=_is_grass_map,
     true=decision(
@@ -381,9 +386,17 @@ _task_decision_tree = decision(
             true=decision(
                 test=lambda p, _: '{}'.format(p.index) in p.skip,
                 true=decision(result=TaskStatus.SKIP),
-                false=decision(result=None)
+                false=decision(
+                    test=_task_always,
+                    true=decision(result=TaskStatus.RUN),
+                    false=decision(result=None)
+                )
             ),
-            false=decision(result=None)
+            false=decision(
+                test=_task_always,
+                true=decision(result=TaskStatus.RUN),
+                false=decision(result=None)
+            )
         )
     )
 )
@@ -392,7 +405,7 @@ _task_decision_tree = decision(
 def prepass(context, tasks, skip=None, force=None, only=None):
     '''Setup task execution, sets task status.'''
     # Assign each task an id and create an entry in the history
-    non_contributing = ['message']
+    non_contributing = ['message', 'always']
     for task in tasks:
         options = copy.deepcopy(task.options)
         for name in non_contributing:

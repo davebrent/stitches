@@ -233,6 +233,10 @@ class TaskHandler(object):
         self.outputs = [Dependency(d) for d in options.get('outputs', [])]
 
 
+class OutputStatus(object):
+    EXISTS = 'exists'
+
+
 class InputStatus(object):
     CHANGE = 'change'
     NOCHANGE = 'nochange'
@@ -336,6 +340,25 @@ def _task_always(planner, task):
     return task.options.get('always', False)
 
 
+_output_decision_tree = decision(
+    test=_is_grass_map,
+    true=decision(
+        test=_grass_map_exists,
+        true=decision(result=OutputStatus.EXISTS),
+        false=decision(result=None),
+    ),
+    false=decision(
+        test=_is_file,
+        true=decision(
+            test=_file_exists,
+            true=decision(result=OutputStatus.EXISTS),
+            false=decision(result=None),
+        ),
+        false=decision(result=None),
+    )
+)
+
+
 _input_decision_tree = decision(
     test=_is_grass_map,
     true=decision(
@@ -424,6 +447,17 @@ def prepass(context, tasks, skip=None, force=None, only=None):
     for task in planner:
         task.status = _task_decision_tree(planner, task)
         if task.status:
+            continue
+
+        non_existing = []
+        for dependency in task.outputs:
+            status = _output_decision_tree(planner, dependency)
+            if status != OutputStatus.EXISTS:
+                non_existing.append(dependency)
+
+        if non_existing:
+            task.status = TaskStatus.RUN
+            task.reason = 'Outputs need re-creating'
             continue
 
         if task.hash not in context.state.history:

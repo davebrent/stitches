@@ -32,12 +32,13 @@ from . import dummy_task
 class PlatformTest(Platform):
     def __init__(self):
         self.value = 0
+        self.files = {}
 
     def file_mtime(self, path):
         return self.value
 
     def file_exists(self, path):
-        return True
+        return self.files.get(path, True)
 
     def map_exists(self, type_, name):
         return True
@@ -171,3 +172,17 @@ def test_pipeline_always_task(env):
     prepass(env.context, env.tasks)
     for task in env.tasks:
         assert task.status == TaskStatus.RUN
+
+
+def test_pipeline_non_existing_output(env):
+    '''Test always runnable task.'''
+    prepass(env.context, env.tasks)
+    for task in env.tasks:
+        assert task.status == TaskStatus.RUN
+        advance(env.context, task)
+
+    env.context.platform.files = {'blah.txt': False}
+    prepass(env.context, env.tasks)
+    expected = [TaskStatus.SKIP, TaskStatus.SKIP, TaskStatus.RUN]
+    for (task, status) in zip(env.tasks, expected):
+        assert task.status == status

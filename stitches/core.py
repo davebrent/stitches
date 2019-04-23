@@ -16,20 +16,16 @@
 from __future__ import print_function
 
 import collections
-import copy
+import hashlib
 import importlib
 import json
-try:
-    from io import StringIO
-except ImportError:
-    from StringIO import StringIO
 import os
 import sys
 
 import colorful
-from grass.script import core as gcore
-import toml
 import wurlitzer
+import toml
+from grass.script import core as gcore
 
 
 class Error(Exception):
@@ -41,28 +37,50 @@ class Error(Exception):
         return self.message
 
 
+class LocationEvent(object):
+    def __init__(self, gisdbase=None, location=None, mapset=None):
+        self.gisdbase = gisdbase
+        self.location = location
+        self.mapset = mapset
+
+
+class TaskEvent(object):
+    def __init__(self, task, pipeline=None, ref=None, args=None, inputs=None,
+                 outputs=None, removes=None, message=None, always=None,
+                 status=None, hash_=None):
+        self.task = task
+        self.args = args
+        self.inputs = inputs
+        self.outputs = outputs
+        self.removes = removes
+        self.message = message
+        self.always = always
+        # Improved error reporting
+        self.pipeline = pipeline
+        self.ref = ref
+        # Calculated later
+        self.status = status
+        self.hash = hash_
+
+
 class TaskStartEvent(object):
-    def __init__(self, stack, index, description):
-        self.stack = stack
-        self.index = index
+    def __init__(self, ref, description):
+        self.ref = ref
         self.description = description
 
 
 class TaskCompleteEvent(object):
-    def __init__(self, stack, index):
-        self.stack = stack
-        self.index = index
+    def __init__(self, task):
+        self.task = task
 
 
 class TaskSkipEvent(object):
-    def __init__(self, stack, index):
-        self.stack = stack
-        self.index = index
+    def __init__(self, task):
+        self.task = task
 
 
 class TaskFatalEvent(object):
-    def __init__(self, stack, traceback):
-        self.stack = stack
+    def __init__(self, traceback):
         self.traceback = traceback
 
 
@@ -81,7 +99,7 @@ class SilentReporter(object):
                      for line in event.traceback.splitlines()]
             if self.current_task:
                 print('{c.bold}[{}]: {}{c.reset}'.format(
-                    self.current_task.index,
+                    self.current_task.ref,
                     self.current_task.description,
                     c=colorful))
                 lines = ['  {}'.format(line) for line in lines]
@@ -93,21 +111,16 @@ class VerboseReporter(object):
 
     def __call__(self, event):
         if isinstance(event, TaskStartEvent):
-            indent = ' ' * (len(event.stack) * 2)
-            print('{}{c.bold}[{}]: {}{c.reset}'.format(
-                indent,
-                event.index,
+            print('{c.bold}[{}]: {}{c.reset}'.format(
+                event.ref,
                 event.description,
                 c=colorful))
         elif isinstance(event, TaskSkipEvent):
-            indent = ' ' * (len(event.stack) * 2)
-            print('{}  {c.orange}Skipped{c.reset}'.format(indent, c=colorful))
+            print('  {c.orange}Skipped{c.reset}'.format(c=colorful))
         elif isinstance(event, TaskCompleteEvent):
-            indent = ' ' * (len(event.stack) * 2)
-            print('{}  {c.green}Completed{c.reset}'.format(indent, c=colorful))
+            print('  {c.green}Completed{c.reset}'.format(c=colorful))
         elif isinstance(event, TaskFatalEvent):
-            indent = ' ' * (len(event.stack) * 2)
-            lines = ['{}  {c.red}{}{c.reset}'.format(indent, line, c=colorful)
+            lines = ['  {c.red}{}{c.reset}'.format(line, c=colorful)
                      for line in event.traceback.splitlines()]
             for line in lines:
                 print(line, file=sys.stderr)
@@ -173,64 +186,25 @@ class State(object):
     TODO: Try and store this is a sqlite table in the grass region.
     '''
 
-    def __init__(self, history=None):
+    def __init__(self, path, history=None):
+        self.path = path
         self.history = collections.defaultdict(dict, **(history or {}))
 
     @classmethod
     def load(cls, path):
         try:
             with open(path, 'r') as fp:
-                data = toml.load(fp)
+                data = json.load(fp)
         except IOError:
             data = {}
-        return cls(**data)
-
-    def save(self, path):
-        serialized = toml.dumps({
-            'history': self.history,
-        })
-        with open(path, 'w') as fp:
-            fp.write(serialized)
-
-
-class Context(object):
-
-    def __init__(self, jinja, gisdbase=None, platform=None, reporter=None):
-        self._path = None
-        self._jinja = jinja
-        self.gisdbase = gisdbase
-        self.stdout = StringIO()
-        self.stderr = StringIO()
-        self.initial = True
-        self.state = None
-        self.stack = []
-        self.reporter = reporter if reporter else SilentReporter()
-        self.platform = platform if platform else Platform()
-        self.hashids = set()
-
-    def init(self, path):
-        self._path = path
-        self.state = State.load(self._path)
+        return cls(path, **data)
 
     def save(self):
-        self.state.save(self._path)
-
-
-class TaskHandler(object):
-    '''Wrapper around a stitches Task.
-
-    This class exists to store extra book keeping information about the
-    execution of a task and to not clutter the api of a users task.
-    '''
-
-    def __init__(self, options, function):
-        self.options = options
-        self.function = function
-        self.hash = None
-        self.status = None
-        self.reason = None
-        self.inputs = [Dependency(d) for d in options.get('inputs', [])]
-        self.outputs = [Dependency(d) for d in options.get('outputs', [])]
+        serialized = json.dumps({
+            'history': self.history,
+        }, indent=2)
+        with open(self.path, 'w') as fp:
+            fp.write(serialized)
 
 
 class OutputStatus(object):
@@ -250,25 +224,17 @@ class TaskStatus(object):
     FAIL = 'fail'
 
 
-class PlannerContext(object):
+class StatusContext(object):
     '''Context that lives during input resolution.'''
-    def __init__(self, context, tasks, skip, force, only):
-        self.context = context
-        self.tasks = tasks
+    def __init__(self, platform, history, skip, force, only):
+        self.platform = platform
+        self.history = history
+        self.created = {}
+        self.statuses = {}
         self.force = force
         self.skip = skip
         self.only = only
-        self.created = {}
         self.task = None
-        self.index = None
-
-    def __iter__(self):
-        for (i, task) in enumerate(self.tasks):
-            self.task = task
-            self.index = i
-            yield task
-            for dependency in task.outputs:
-                self.created[dependency.fmt()] = i
 
 
 def decision(test=None, true=None, false=None, result=None):
@@ -292,7 +258,7 @@ def _is_grass_map(planner, dep):
 
 def _grass_map_exists(planner, dep):
     '''Returns true if the grass map exists.'''
-    return planner.context.platform.map_exists(dep.type, dep.name)
+    return planner.platform.map_exists(dep.type, dep.name)
 
 
 def _creator_visible(planner, dep):
@@ -303,8 +269,8 @@ def _creator_visible(planner, dep):
 
 def _creator_changed(planner, dep):
     '''Returns true if the creator of a map has changed.'''
-    parent = planner.tasks[planner.created[dep.fmt()]]
-    return parent.status != TaskStatus.SKIP
+    parent_status = planner.statuses[planner.created[dep.fmt()]]
+    return parent_status != TaskStatus.SKIP
 
 
 def _is_file(planner, dep):
@@ -314,22 +280,20 @@ def _is_file(planner, dep):
 
 def _file_exists(planner, dep):
     '''Returns true if the file exists.'''
-    return planner.context.platform.file_exists(dep.path)
+    return planner.platform.file_exists(dep.path)
 
 
 def _file_has_previous(planner, dep):
     '''Returns true if the task has seen the file before.'''
-    history = planner.context.state.history[planner.task.hash]
+    history = planner.history.get(planner.task.hash, {}).get('inputs', {})
     return dep.fmt() in history
 
 
 def _file_mtime_recent(planner, dep):
     '''Returns true if a file has been more recently modified.'''
-    history = planner.context.state.history[planner.task.hash]
-    # Offset was picked, using trial and error from an actual case of where the
-    # floating point comparison caused a problem
-    previous = history[dep.fmt()] + 0.000001
-    current = planner.context.platform.file_mtime(dep.path)
+    history = planner.history[planner.task.hash]
+    previous = history['inputs'][dep.fmt()]
+    current = planner.platform.file_mtime(dep.path)
     if current > previous:
         return True
     return False
@@ -337,7 +301,7 @@ def _file_mtime_recent(planner, dep):
 
 def _task_always(planner, task):
     '''Return true if the task is marked as "always".'''
-    return task.options.get('always', False)
+    return task.always
 
 
 _output_decision_tree = decision(
@@ -400,14 +364,14 @@ _task_decision_tree = decision(
     false=decision(
         test=lambda p, _: p.only is not None,
         true=decision(
-            test=lambda p, _: '{}'.format(p.index) == p.only,
+            test=lambda p, t: t.ref == p.only,
             true=decision(result=TaskStatus.RUN),
             false=decision(result=TaskStatus.SKIP),
         ),
         false=decision(
             test=lambda p, _: p.skip is not None,
             true=decision(
-                test=lambda p, _: '{}'.format(p.index) in p.skip,
+                test=lambda p, t: t.ref in p.skip,
                 true=decision(result=TaskStatus.SKIP),
                 false=decision(
                     test=_task_always,
@@ -425,124 +389,183 @@ _task_decision_tree = decision(
 )
 
 
-def prepass(context, tasks, skip=None, force=None, only=None):
-    '''Setup task execution, sets task status.'''
-    # Assign each task an id and create an entry in the history
-    non_contributing = ['message', 'always']
-    for task in tasks:
-        options = copy.deepcopy(task.options)
-        for name in non_contributing:
-            options.pop(name, None)
-        task.hash = str(hash(json.dumps(options, sort_keys=True)))
-        context.hashids.add(task.hash)
+def _task_status(planner, task):
+    '''Return a status for a task.'''
+    status = _task_decision_tree(planner, task)
+    if status:
+        return status
 
-    # Filter out non-existant tasks
-    keys = list(context.state.history.keys())
-    for hashid in keys:
-        if hashid not in context.hashids:
-            del context.state.history[hashid]
+    # Look at the outputs
+    non_existing = []
+    for dependency in task.outputs:
+        status = _output_decision_tree(planner, dependency)
+        if status != OutputStatus.EXISTS:
+            non_existing.append(dependency)
+    if non_existing:
+        return TaskStatus.RUN
 
-    # Create a status for each task
-    planner = PlannerContext(context, tasks, skip, force, only)
-    for task in planner:
-        task.status = _task_decision_tree(planner, task)
-        if task.status:
-            continue
+    # Look at the history
+    if task.hash not in planner.history:
+        return TaskStatus.RUN
 
-        non_existing = []
-        for dependency in task.outputs:
-            status = _output_decision_tree(planner, dependency)
-            if status != OutputStatus.EXISTS:
-                non_existing.append(dependency)
-
-        if non_existing:
-            task.status = TaskStatus.RUN
-            task.reason = 'Outputs need re-creating'
-            continue
-
-        if task.hash not in context.state.history:
-            task.status = TaskStatus.RUN
-            task.reason = 'New task'
-            continue
-
-        failures = []
-        unknowns = []
-        result = TaskStatus.SKIP
-
-        for dependency in task.inputs:
-            status = _input_decision_tree(planner, dependency)
-            if status == InputStatus.FAIL:
-                failures.append(dependency)
-            elif status == InputStatus.UNKNOWN:
-                unknowns.append(dependency)
-            elif status == InputStatus.CHANGE:
-                result = TaskStatus.RUN
-
-        if failures:
-            task.status = TaskStatus.FAIL
-            task.reason = 'Failed to resolve dependencies'
-        elif unknowns:
-            task.status = TaskStatus.RUN
-            task.reason = 'Unknown sources for dependencies'
-        else:
-            task.status = result
+    # Look at the inputs
+    failures = []
+    unknowns = []
+    result = TaskStatus.SKIP
+    for dependency in task.inputs:
+        status = _input_decision_tree(planner, dependency)
+        if status == InputStatus.FAIL:
+            failures.append(dependency)
+        elif status == InputStatus.UNKNOWN:
+            unknowns.append(dependency)
+        elif status == InputStatus.CHANGE:
+            result = TaskStatus.RUN
+    if failures:
+        return TaskStatus.FAIL
+    elif unknowns:
+        return TaskStatus.RUN
+    else:
+        return result
 
 
-def advance(context, task):
+def advance(platform, history, task):
     '''Advance state with the result a task.'''
-    history = context.state.history[task.hash]
+    task_history = history.get(task.hash, {'inputs': {}})
+    # Useful for debugging retained state
+    task_history['message'] = task.message
     for dependency in task.inputs:
         if dependency.type == Dependency.FS:
-            history[dependency.fmt()] = context.platform.file_mtime(
+            task_history['inputs'][dependency.fmt()] = platform.file_mtime(
                 dependency.path)
+    history[task.hash] = task_history
 
 
-def execute(context, config, force=False, skip=None, only=None):
-    # Functions are imported early, to fail early, for trivial issues, such as
-    # syntax errors, import errors etc in user code, rather than halfway
-    # through a pipeline
-    tasks = []
-    for (i, options) in enumerate(config.get('tasks', [])):
-        name = options.get('task')
-        if not name:
-            raise Error('Task [{}] missing [task]'.format(i))
-        try:
-            function = getattr(
-                importlib.import_module('stitches.tasks'), name)
-        except AttributeError:
-            (module, klass) = name.split(':')
-            try:
-                function = getattr(
-                    importlib.import_module(module), klass)
-            except ImportError:
-                raise Error('Task [{}] not found'.format(name))
-        tasks.append(TaskHandler(options, function))
+def reconcile(history, seen):
+    '''Remove previously seen keys.'''
+    keys = list(history.keys())
+    for key in keys:
+        if key not in seen:
+            del history[key]
 
-    # Plan the task execution, work out which tasks may be skipped etc.
-    prepass(context, tasks, force=force, skip=skip, only=only)
 
-    for (i, task) in enumerate(tasks):
-        message = task.options.get('message', '')
-        context.reporter(TaskStartEvent(list(context.stack), i, message))
+def load(jinja_env, options, gisdbase=None, location=None, mapset='PERMANENT'):
+    '''Load all tasks from a pipeline.
 
-        if task.status == TaskStatus.SKIP:
-            context.reporter(TaskSkipEvent(list(context.stack), i))
+    This expands a pipeline, and all of sub-pipelines and location changes into
+    a normalized, flat series, of events.
+    '''
+    stack = [('config', (None, None, options))]
+    locations = []
+
+    while stack:
+        tag, data = stack.pop()
+        if tag == 'location':
+            yield data
             continue
-        elif task.status == TaskStatus.FAIL:
-            raise Error(task.reason)
-        elif task.status == TaskStatus.RUN:
-            context.stack.append(i)
-            logged = getattr(task.function, 'logged', True)
-            # Exceptions are deliberately not caught here to avoid any
-            # complications with nested pipelines & losing a useful stacktrace.
-            # They are instead to propogate to the caller of the first pipeline
-            if logged:
-                with wurlitzer.pipes(stdout=context.stdout,
-                                     stderr=context.stderr):
-                    task.function(context, task.options.get('args'))
-            else:
-                task.function(context, task.options.get('args'))
-            advance(context, task)
-            context.save()
-            context.stack.pop()
-            context.reporter(TaskCompleteEvent(list(context.stack), i))
+
+        (parent, ref, options) = data
+
+        if 'pipeline' in options:
+            name = options.get('pipeline')
+            args = options.get('args', {})
+
+            variables = args.get('vars', {})
+            gisdbase_ = args.get('gisdbase', gisdbase)
+            location_ = args.get('location', location)
+            mapset_ = args.get('mapset', mapset)
+
+            template = jinja_env.get_template(name)
+            config = toml.loads(template.render(variables))
+
+            location = LocationEvent(
+                gisdbase=config.get('gisdbase', gisdbase_),
+                location=config.get('location', location_),
+                mapset=config.get('mapset', mapset_))
+            yield location
+            if locations:
+                stack.append(('location', locations.pop()))
+            locations.append(location)
+
+            tasks = list(enumerate(list(config.get('tasks', []))))
+            for (i, task) in reversed(tasks):
+                tref = str(i) if ref is None else '{}/{}'.format(ref, i)
+                stack.append(('config', (name, tref, task)))
+
+        elif 'task' in options:
+            contributing = ['task', 'args', 'inputs', 'outputs', 'removes']
+            hashable = {name: options.get(name) for name in contributing}
+
+            hasher = hashlib.md5()
+            hasher.update(json.dumps(hashable, sort_keys=True).encode('ascii'))
+            hash_ = hasher.hexdigest()
+
+            inputs = [Dependency(d) for d in options.get('inputs', [])]
+            outputs = [Dependency(d) for d in options.get('outputs', [])]
+            removes = [Dependency(d) for d in options.get('removes', [])]
+
+            yield TaskEvent(options['task'],
+                            pipeline=parent,
+                            ref=ref,
+                            hash_=hash_,
+                            message=options.get('message', ''),
+                            args=options.get('args', {}),
+                            always=options.get('always', False),
+                            inputs=inputs,
+                            outputs=outputs,
+                            removes=removes,)
+
+
+def analyse(stream, platform, history, force=None, skip=None, only=None):
+    '''Analyse the stream of tasks to be run.
+
+    Responsible for setting the status field of a task, determining if it
+    should be run or not.
+    '''
+    planner = StatusContext(platform, history, skip, force, only)
+
+    for event in stream:
+        if not isinstance(event, TaskEvent):
+            yield event
+            continue
+
+        planner.task = event
+        planner.task.status = _task_status(planner, event)
+        planner.statuses[planner.task.ref] = planner.task.status
+        yield planner.task
+
+        for dependency in planner.task.outputs:
+            planner.created[dependency.fmt()] = event.ref
+        for dependency in planner.task.removes:
+            del planner.created[dependency.fmt()]
+
+
+def _load_task(task):
+    name = task.task
+    try:
+        return getattr(
+            importlib.import_module('stitches.tasks'), name)
+    except AttributeError:
+        (module, klass) = name.split(':')
+        try:
+            return getattr(
+                importlib.import_module(module), klass)
+        except ImportError:
+            raise Error('Task "{}" not found, in "{}" at "{}"'.format(
+                task.task, task.pipeline, task.ref))
+
+
+def execute(stream, stdout, stderr):
+    for event in stream:
+        if not isinstance(event, TaskEvent):
+            continue
+        yield TaskStartEvent(event.ref, event.message)
+        if event.status == TaskStatus.SKIP:
+            yield TaskSkipEvent(event)
+            continue
+        elif event.status == TaskStatus.FAIL:
+            raise Error(event)
+        elif event.status == TaskStatus.RUN:
+            function = _load_task(event)
+            with wurlitzer.pipes(stdout=stdout, stderr=stderr):
+                function(event.args)
+            yield TaskCompleteEvent(event)

@@ -13,20 +13,16 @@
 # You should have received a copy of the GNU General Public License
 # along with Stitches. If not, see <https://www.gnu.org/licenses/>.
 
-import tempfile
-
+import jinja2
 import pytest
+import toml
 
-from stitches import Context
 from stitches import Dependency
-from stitches import State
-from stitches import TaskHandler
 from stitches import TaskStatus
-from stitches import prepass
 from stitches import advance
 from stitches import Platform
-
-from . import dummy_task
+from stitches import load
+from stitches import analyse
 
 
 class PlatformTest(Platform):
@@ -47,28 +43,24 @@ class PlatformTest(Platform):
 class PipelineTestState(object):
 
     def __init__(self):
-        self.context = Context(None, platform=PlatformTest())
-        self.context.init(tempfile.mktemp())
-        self.tasks = [
-            TaskHandler({
-                'name': 'foo',
-                'args': 1,
-                'inputs': ['fs/foo.txt'],
-                'outputs': ['vector/baz'],
-            }, dummy_task),
-            TaskHandler({
-                'name': 'bar',
-                'args': 2,
-                'inputs': ['vector/baz'],
-                'outputs': ['vector/foo'],
-            }, dummy_task),
-            TaskHandler({
-                'name': 'baz',
-                'args': 3,
-                'inputs': ['vector/foo'],
-                'outputs': ['fs/blah.txt'],
-            }, dummy_task),
-        ]
+        self.platform = PlatformTest()
+        self.history = {}
+        self.example_file = '''
+        [[tasks]]
+        task = "foo"
+        inputs = ["fs/foo.txt"]
+        outputs = ["vector/baz"]
+
+        [[tasks]]
+        task = "bar"
+        inputs = ["vector/baz"]
+        outputs = ["vector/foo"]
+
+        [[tasks]]
+        task = "baz"
+        inputs = ["vector/foo"]
+        outputs = ["fs/blah.txt"]
+        '''
 
 
 @pytest.fixture
@@ -99,90 +91,202 @@ def test_dependency_definition():
 
 def test_pipeline_trivial_skip(env):
     '''A simple re-run of a pipeline should be skipped.'''
-    prepass(env.context, env.tasks)
-    for task in env.tasks:
+    jinja_env = jinja2.Environment(loader=jinja2.DictLoader({
+        'mypipeline': env.example_file
+    }))
+
+    events = load(jinja_env, {'pipeline': 'mypipeline'})
+    next(events)  # Location event
+    events = analyse(events, env.platform, env.history)
+    for task in events:
         assert task.status == TaskStatus.RUN
-    for task in env.tasks:
-        advance(env.context, task)
-    prepass(env.context, env.tasks)
-    for task in env.tasks:
+        advance(env.platform, env.history, task)
+
+    events = load(jinja_env, {'pipeline': 'mypipeline'})
+    next(events)  # Location event
+    events = analyse(events, env.platform, env.history)
+    for task in events:
         assert task.status == TaskStatus.SKIP
 
 
 def test_pipeline_root_file_change(env):
     '''Test file modified invalidating the pipeline.'''
-    prepass(env.context, env.tasks)
-    for task in env.tasks:
-        assert task.status == TaskStatus.RUN
-    for task in env.tasks:
-        advance(env.context, task)
+    jinja_env = jinja2.Environment(loader=jinja2.DictLoader({
+        'mypipeline': env.example_file
+    }))
 
-    env.context.platform.value += 1
-    prepass(env.context, env.tasks)
-    for task in env.tasks:
+    events = load(jinja_env, {'pipeline': 'mypipeline'})
+    next(events)  # Location event
+    events = analyse(events, env.platform, env.history)
+    for task in events:
         assert task.status == TaskStatus.RUN
+        advance(env.platform, env.history, task)
 
-    for task in env.tasks:
-        advance(env.context, task)
-    prepass(env.context, env.tasks)
-    for task in env.tasks:
+    env.platform.value += 1
+
+    events = load(jinja_env, {'pipeline': 'mypipeline'})
+    next(events)  # Location event
+    events = analyse(events, env.platform, env.history)
+    for task in events:
+        assert task.status == TaskStatus.RUN
+        advance(env.platform, env.history, task)
+
+    events = load(jinja_env, {'pipeline': 'mypipeline'})
+    next(events)  # Location event
+    events = analyse(events, env.platform, env.history)
+    for task in events:
         assert task.status == TaskStatus.SKIP
 
 
 def test_pipeline_root_arg_change(env):
     '''Test root task had a change of arguments.'''
-    prepass(env.context, env.tasks)
-    for task in env.tasks:
-        assert task.status == TaskStatus.RUN
-    for task in env.tasks:
-        advance(env.context, task)
+    pfile = toml.loads(env.example_file)
+    pfile['tasks'][0]['args'] = 1337
 
-    env.tasks[0].options['args'] = 1337
-    prepass(env.context, env.tasks)
-    for task in env.tasks:
-        assert task.status == TaskStatus.RUN
+    jinja_env = jinja2.Environment(loader=jinja2.DictLoader({
+        'mypipeline': env.example_file,
+        'mypipeline2': toml.dumps(pfile)
+    }))
 
-    for task in env.tasks:
-        advance(env.context, task)
-    prepass(env.context, env.tasks)
-    for task in env.tasks:
+    events = load(jinja_env, {'pipeline': 'mypipeline'})
+    next(events)  # Location event
+    events = analyse(events, env.platform, env.history)
+    for task in events:
+        assert task.status == TaskStatus.RUN
+        advance(env.platform, env.history, task)
+
+    events = load(jinja_env, {'pipeline': 'mypipeline2'})
+    next(events)  # Location event
+    events = analyse(events, env.platform, env.history)
+    for task in events:
+        assert task.status == TaskStatus.RUN
+        advance(env.platform, env.history, task)
+
+    events = load(jinja_env, {'pipeline': 'mypipeline2'})
+    next(events)  # Location event
+    events = analyse(events, env.platform, env.history)
+    for task in events:
         assert task.status == TaskStatus.SKIP
 
 
 def test_pipeline_non_contributing_change(env):
     '''Test change of non-contributing keys.'''
-    prepass(env.context, env.tasks)
-    for task in env.tasks:
+    pfile = toml.loads(env.example_file)
+    pfile['tasks'][0]['message'] = 'blah'
+
+    jinja_env = jinja2.Environment(loader=jinja2.DictLoader({
+        'mypipeline': env.example_file,
+        'mypipeline2': toml.dumps(pfile)
+    }))
+
+    events = load(jinja_env, {'pipeline': 'mypipeline'})
+    next(events)  # Location event
+    events = analyse(events, env.platform, env.history)
+    for task in events:
         assert task.status == TaskStatus.RUN
-        advance(env.context, task)
-    env.tasks[0].options['message'] = 'blah'
-    prepass(env.context, env.tasks)
-    for task in env.tasks:
+        advance(env.platform, env.history, task)
+
+    events = load(jinja_env, {'pipeline': 'mypipeline2'})
+    next(events)  # Location event
+    events = analyse(events, env.platform, env.history)
+    for task in events:
         assert task.status == TaskStatus.SKIP
 
 
 def test_pipeline_always_task(env):
     '''Test always runnable task.'''
-    for task in env.tasks:
-        task.options['always'] = True
-    prepass(env.context, env.tasks)
-    for task in env.tasks:
+    pfile = toml.loads(env.example_file)
+    for task in pfile['tasks']:
+        task['always'] = True
+
+    jinja_env = jinja2.Environment(loader=jinja2.DictLoader({
+        'mypipeline': toml.dumps(pfile)
+    }))
+
+    events = load(jinja_env, {'pipeline': 'mypipeline'})
+    next(events)  # Location event
+    events = analyse(events, env.platform, env.history)
+    for task in events:
         assert task.status == TaskStatus.RUN
-        advance(env.context, task)
-    prepass(env.context, env.tasks)
-    for task in env.tasks:
+        advance(env.platform, env.history, task)
+
+    events = load(jinja_env, {'pipeline': 'mypipeline'})
+    next(events)  # Location event
+    events = analyse(events, env.platform, env.history)
+    for task in events:
         assert task.status == TaskStatus.RUN
 
 
 def test_pipeline_non_existing_output(env):
     '''Test always runnable task.'''
-    prepass(env.context, env.tasks)
-    for task in env.tasks:
-        assert task.status == TaskStatus.RUN
-        advance(env.context, task)
+    jinja_env = jinja2.Environment(loader=jinja2.DictLoader({
+        'mypipeline': env.example_file
+    }))
 
-    env.context.platform.files = {'blah.txt': False}
-    prepass(env.context, env.tasks)
+    events = load(jinja_env, {'pipeline': 'mypipeline'})
+    next(events)  # Location event
+    events = analyse(events, env.platform, env.history)
+    for task in events:
+        assert task.status == TaskStatus.RUN
+        advance(env.platform, env.history, task)
+
+    env.platform.files = {'blah.txt': False}
+
+    events = load(jinja_env, {'pipeline': 'mypipeline'})
+    next(events)  # Location event
+    events = analyse(events, env.platform, env.history)
+
     expected = [TaskStatus.SKIP, TaskStatus.SKIP, TaskStatus.RUN]
-    for (task, status) in zip(env.tasks, expected):
+    for (task, status) in zip(events, expected):
         assert task.status == status
+
+
+def test_expand_pipeline(env):
+    jinja_env = jinja2.Environment(loader=jinja2.DictLoader({
+        'mypipeline': '''
+        [[tasks]]
+        pipeline = 'raster_pipeline'
+
+        [[tasks]]
+        task = 'bar'
+        ''',
+        'raster_pipeline': '''
+        location = 'rasters'
+        mapset = 'soils'
+
+        [[tasks]]
+        task = 'foo'
+        '''
+    }))
+
+    root = {'pipeline': 'mypipeline'}
+    stream = load(jinja_env, root, gisdbase='mydb', location='myloc')
+
+    location_event = next(stream)
+    assert location_event.gisdbase == 'mydb'
+    assert location_event.location == 'myloc'
+    assert location_event.mapset == 'PERMANENT'
+
+    location_event = next(stream)
+    assert location_event.gisdbase == 'mydb'
+    assert location_event.location == 'rasters'
+    assert location_event.mapset == 'soils'
+
+    task_event = next(stream)
+    assert task_event.ref == '0/0'
+    assert task_event.task == 'foo'
+    assert task_event.args == {}
+    assert task_event.inputs == []
+    assert task_event.outputs == []
+
+    location_event = next(stream)
+    assert location_event.gisdbase == 'mydb'
+    assert location_event.location == 'myloc'
+    assert location_event.mapset == 'PERMANENT'
+
+    task_event = next(stream)
+    assert task_event.ref == '1'
+    assert task_event.task == 'bar'
+    assert task_event.args == {}
+    assert task_event.inputs == []
+    assert task_event.outputs == []

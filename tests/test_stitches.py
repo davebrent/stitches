@@ -13,14 +13,15 @@
 # You should have received a copy of the GNU General Public License
 # along with Stitches. If not, see <https://www.gnu.org/licenses/>.
 
+import json
 import os
 import shutil
 import subprocess
 import tempfile
 
+import pytest
 from grass_session import Session
 from grass.script import core as gcore
-import pytest
 
 
 class Environment(object):
@@ -108,7 +109,7 @@ def test_tasks_grass_import(env):
     args = {module='v.import', input='tests/point.geojson', output='mypoint'}
     ''')
     assert returncode == 0
-    with Session(gisdb=env.gisdbase, location='foobar'):
+    with Session(gisdb=env.gisdbase, location='foobar', mapset='PERMANENT'):
         maps = gcore.read_command(
             'g.list', type='vector', pattern='mypoint').splitlines()
         assert maps[0].decode('utf-8') == 'mypoint'
@@ -153,8 +154,8 @@ def test_tasks_composite_pipeline(env):
     args = {module='g.proj', c=true, proj4='+proj=utm +zone=33 +datum=WGS84'}
 
     [[tasks]]
-    task = 'pipeline'
-    args = {name='{{ other }}', vars={in='tests/point.geojson', out='mypoint'}}
+    pipeline = '{{ other }}'
+    args = {vars={in='tests/point.geojson', out='mypoint'}}
     '''
 
     fopts = dict(mode='w', dir=env.root, prefix='config_', suffix='.toml')
@@ -190,9 +191,8 @@ def test_tasks_composite_pipeline_output(env):
     args = {module='g.proj', c=true, proj4='+proj=utm +zone=33 +datum=WGS84'}
 
     [[tasks]]
-    task = 'pipeline'
+    pipeline = '{{ other }}'
     message = 'b'
-    args = {name='{{ other }}'}
     '''
 
     fopts = dict(mode='w', dir=env.root, prefix='config_', suffix='.toml')
@@ -207,9 +207,7 @@ def test_tasks_composite_pipeline_output(env):
     assert returncode == 0
     assert output == '''[0]: a
   Completed
-[1]: b
-  [0]: c
-    Completed
+[1/0]: c
   Completed
 '''
 
@@ -232,9 +230,8 @@ def test_tasks_composite_pipeline_retained_state(env):
     args = {module='g.proj', c=true, proj4='+proj=utm +zone=33 +datum=WGS84'}
 
     [[tasks]]
-    task = 'pipeline'
+    pipeline = '{{ other }}'
     message = 'b'
-    args = {name='{{ other }}'}
     '''
 
     fopts = dict(mode='w', dir=env.root, prefix='config_', suffix='.toml')
@@ -255,6 +252,33 @@ def test_tasks_composite_pipeline_retained_state(env):
         assert returncode == 0
         assert output == '''[0]: a
   Skipped
-[1]: b
+[1/0]: c
   Skipped
 '''
+
+
+def test_state_cleaning(env):
+    '''Retained state should remove unneeded info.'''
+    returncode, _, _ = env.run([], '''
+    location = 'foobar'
+
+    [[tasks]]
+    task = 'grass'
+    args = {module='g.proj', c=true, proj4='+proj=utm +zone=33 +datum=WGS84'}
+    ''')
+    assert returncode == 0
+
+    returncode, _, _ = env.run([], '''
+    location = 'foobar'
+
+    [[tasks]]
+    task = 'grass'
+    args = {module='g.proj', c=true, proj4='+proj=utm +zone=31 +datum=WGS84'}
+    ''')
+    assert returncode == 0
+
+    state_path = os.path.join(env.gisdbase, 'foobar', 'PERMANENT',
+                              'stitches.state.json')
+    with open(state_path) as fp:
+        state = json.load(fp)
+        assert len(state['history'].keys()) == 1

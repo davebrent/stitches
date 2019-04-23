@@ -16,14 +16,18 @@
 '''Stitches.
 
 Usage:
-  stitches [--gisdbase=<path>] [[--skip=<task>]... [--force] | --only=<task>]
-           [--log=<path>] [--verbose] [--vars=<vars>] <config>
+  stitches [--gisdbase=<path>] [--location=<name>] [--mapset=<name>]
+           [[--skip=<task>]... [--force] | --only=<task>]
+           [--log=<path>] [--verbose]
+           [--vars=<vars>] <config>
 
 Options:
   -h --help             Show this screen.
   -v --verbose          Show more output.
-  --gisdbase=<path>     Set path to the GRASS GIS Database.
   --log=<path>          Print GRASS's stdout at the end of run.
+  --gisdbase=<path>     Set path to the GRASS GIS Database.
+  --location=<name>     Name of GRASS location.
+  --mapset=<name>       Name of GRASS mapset.
   --skip=<task>         Skip a task.
   --only=<task>         Run a single task.
   --force               Force each task to run.
@@ -36,21 +40,31 @@ import datetime
 import os
 import sys
 import traceback
+try:
+    from io import StringIO
+except ImportError:
+    from StringIO import StringIO
 
 import docopt
+import grass_session
 import jinja2
 
-from .tasks import pipeline
-from .core import Context
+from .core import State
+from .core import Platform
 from .core import TaskFatalEvent
+from .core import TaskCompleteEvent
+from .core import TaskSkipEvent
 from .core import VerboseReporter
 from .core import SilentReporter
+from .core import analyse
+from .core import load
+from .core import advance
+from .core import execute
+from .core import reconcile
 
 
 def main():
     args = docopt.docopt(__doc__)
-
-    root = os.path.dirname(os.path.abspath(args['<config>']))
 
     variables = {}
     if args['--vars']:
@@ -58,38 +72,79 @@ def main():
             name, value = var.split('=')
             variables[name] = value
 
-    env = jinja2.Environment(loader=jinja2.FileSystemLoader(root))
     reporter = SilentReporter()
     if args['--verbose']:
         reporter = VerboseReporter()
-    context = Context(env, gisdbase=args['--gisdbase'], reporter=reporter)
 
-    code = 0
-    try:
-        pipeline(context, {
+    root = os.path.dirname(os.path.abspath(args['<config>']))
+    jinja_env = jinja2.Environment(loader=jinja2.FileSystemLoader(root))
+
+    # Load the stream of tasks
+    stream = load(jinja_env, {
+        'pipeline': os.path.basename(args['<config>']),
+        'args': {
             'vars': variables,
-            'name': os.path.basename(args['<config>']),
-            'skip': args['--skip'],
-            'force': args['--force'],
-            'only': args['--only'],
-        })
+            'gisdbase': args['--gisdbase'],
+            'location': args['--location'],
+            'mapset': args['--mapset'],
+        }
+    })
+
+    # First event in the stream must be a location event
+    head = next(stream)
+    gisdbase = head.gisdbase
+    location = head.location
+    mapset = head.mapset
+
+    # Load previous state
+    state = State.load(os.path.join(
+        gisdbase, location, mapset or 'PERMANENT', 'stitches.state.json'
+    ))
+
+    platform = Platform()
+
+    # Analyse the stream of events with the previous state
+    stream = analyse(stream, platform, state.history,
+                     force=args['--force'],
+                     skip=args['--skip'],
+                     only=args['--only'])
+
+    (code, stdout, stderr) = (0, StringIO(), StringIO())
+    try:
+        # Create opts needs to be not None, to create the location when it does
+        # not already exist.
+        with grass_session.Session(gisdb=gisdbase,
+                                   location=location,
+                                   mapset=mapset,
+                                   create_opts=''):
+            hashes = set()
+            for event in execute(stream, stdout, stderr):
+                if isinstance(event, TaskCompleteEvent):
+                    advance(platform, state.history, event.task)
+                    hashes.add(event.task.hash)
+                    state.save()
+                elif isinstance(event, TaskSkipEvent):
+                    hashes.add(event.task.hash)
+                reporter(event)
+            reconcile(state.history, hashes)
+            state.save()
     except Exception:  # pylint: disable=broad-except
         stack_trace = traceback.format_exc()
-        context.reporter(TaskFatalEvent(list(context.stack), stack_trace))
+        reporter(TaskFatalEvent(stack_trace))
         if not args['--log']:
             uniq = datetime.datetime.now().strftime('%H_%M_%S_%f')
             args['--log'] = 'stitches.grass-{}.log'.format(uniq)
         code = 1
 
     if args['--log']:
-        outlog = context.stdout.getvalue()
-        errlog = context.stderr.getvalue()
+        outlog = stdout.getvalue()
+        errlog = stderr.getvalue()
         with open(args['--log'], 'w') as fp:
             print('****STDOUT****', file=fp)
             fp.write(outlog)
             print('****STDERR****', file=fp)
             fp.write(errlog)
-        context.stdout.close()
-        context.stderr.close()
+        stdout.close()
+        stderr.close()
 
     sys.exit(code)

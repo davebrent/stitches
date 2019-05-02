@@ -164,6 +164,12 @@ class Dependency(object):
         return self._spec
 
 
+def _object_checksum(obj):
+    hasher = hashlib.md5()
+    hasher.update(json.dumps(obj, sort_keys=True).encode('ascii'))
+    return hasher.hexdigest()
+
+
 class Platform(object):
 
     def file_mtime(self, path):
@@ -178,6 +184,9 @@ class Platform(object):
         if res and res[0].decode('utf-8') == name:
             return True
         return False
+
+    def region_hash(self):
+        return _object_checksum(gcore.region())
 
 
 class State(object):
@@ -408,6 +417,11 @@ def _task_status(planner, task):
     if task.hash not in planner.history:
         return TaskStatus.RUN
 
+    # Look at the current region
+    region_hash = planner.platform.region_hash()
+    if planner.history[task.hash]['region'] != region_hash:
+        return TaskStatus.RUN
+
     # Look at the inputs
     failures = []
     unknowns = []
@@ -426,26 +440,6 @@ def _task_status(planner, task):
         return TaskStatus.RUN
     else:
         return result
-
-
-def advance(platform, history, task):
-    '''Advance state with the result a task.'''
-    task_history = history.get(task.hash, {'inputs': {}})
-    # Useful for debugging retained state
-    task_history['message'] = task.message
-    for dependency in task.inputs:
-        if dependency.type == Dependency.FS:
-            task_history['inputs'][dependency.fmt()] = platform.file_mtime(
-                dependency.path)
-    history[task.hash] = task_history
-
-
-def reconcile(history, seen):
-    '''Remove previously seen keys.'''
-    keys = list(history.keys())
-    for key in keys:
-        if key not in seen:
-            del history[key]
 
 
 def load(jinja_env, options, gisdbase=None, location=None, mapset='PERMANENT'):
@@ -494,10 +488,7 @@ def load(jinja_env, options, gisdbase=None, location=None, mapset='PERMANENT'):
         elif 'task' in options:
             contributing = ['task', 'args', 'inputs', 'outputs', 'removes']
             hashable = {name: options.get(name) for name in contributing}
-
-            hasher = hashlib.md5()
-            hasher.update(json.dumps(hashable, sort_keys=True).encode('ascii'))
-            hash_ = hasher.hexdigest()
+            hash_ = _object_checksum(hashable)
 
             inputs = [Dependency(d) for d in options.get('inputs', [])]
             outputs = [Dependency(d) for d in options.get('outputs', [])]
@@ -522,21 +513,45 @@ def analyse(stream, platform, history, force=None, skip=None, only=None):
     should be run or not.
     '''
     planner = StatusContext(platform, history, skip, force, only)
+    completed = set()
 
     for event in stream:
         if not isinstance(event, TaskEvent):
             yield event
             continue
 
-        planner.task = event
-        planner.task.status = _task_status(planner, event)
-        planner.statuses[planner.task.ref] = planner.task.status
-        yield planner.task
+        task = event
+        planner.task = task
+        planner.task.status = _task_status(planner, task)
+        planner.statuses[task.ref] = task.status
 
-        for dependency in planner.task.outputs:
-            planner.created[dependency.fmt()] = event.ref
-        for dependency in planner.task.removes:
+        region_hash = platform.region_hash()
+
+        yield task
+
+        completed.add(task.hash)
+
+        # Advance planner state
+        for dependency in task.outputs:
+            planner.created[dependency.fmt()] = task.ref
+        for dependency in task.removes:
             del planner.created[dependency.fmt()]
+
+        # Update the history
+        task_history = history.get(task.hash, {'inputs': {}})
+        task_history['region'] = region_hash
+        task_history['message'] = task.message
+        for dependency in task.inputs:
+            if dependency.type == Dependency.FS:
+                task_history['inputs'][dependency.fmt()] = platform.file_mtime(
+                    dependency.path)
+        history[task.hash] = task_history
+
+    # Remove previously seen keys.
+    keys = list(history.keys())
+    for key in keys:
+        if key not in completed:
+            del history[key]
 
 
 def _load_task(task):

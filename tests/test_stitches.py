@@ -251,7 +251,7 @@ def test_tasks_composite_pipeline_retained_state(env):
         ], config)
         assert returncode == 0
         assert output == '''[0]: a
-  Skipped
+  Completed
 [1/0]: c
   Skipped
 '''
@@ -282,3 +282,43 @@ def test_state_cleaning(env):
     with open(state_path) as fp:
         state = json.load(fp)
         assert len(state['history'].keys()) == 1
+
+
+def test_tasks_region_change(env):
+    '''Region settings are checked when caching tasks.'''
+    pipeline = '''
+    location = 'foobar'
+
+    [[tasks]]
+    message = 'a'
+    task = 'grass'
+    [tasks.args]
+    module = 'g.proj'
+    c = true
+    proj4 = '+proj=utm +zone={{ zone }} +datum=WGS84'
+
+    [[tasks]]
+    task = 'grass'
+    message = 'b'
+    [tasks.args]
+    module = 'v.import'
+    input = 'tests/point.geojson'
+    output = 'mypoint'
+    overwrite = true
+    '''
+    returncode, _, _ = env.run(['--verbose', '--vars', 'zone=33'], pipeline)
+    assert returncode == 0
+
+    _, output, _ = env.run(['--verbose', '--vars', 'zone=32'], pipeline)
+    assert output == '''[0]: a
+  Completed
+[1]: b
+  Completed
+'''
+
+    _, output, _ = env.run(['--verbose', '--vars', 'zone=32'], pipeline)
+    assert output == '''[0]: a
+  Completed
+[1]: b
+  Skipped
+'''

@@ -53,14 +53,11 @@ from .core import State
 from .core import Platform
 from .core import TaskFatalEvent
 from .core import TaskCompleteEvent
-from .core import TaskSkipEvent
 from .core import VerboseReporter
 from .core import SilentReporter
 from .core import analyse
 from .core import load
-from .core import advance
 from .core import execute
-from .core import reconcile
 
 
 def main():
@@ -117,16 +114,10 @@ def main():
                                    location=location,
                                    mapset=mapset,
                                    create_opts=''):
-            hashes = set()
             for event in execute(stream, stdout, stderr):
                 if isinstance(event, TaskCompleteEvent):
-                    advance(platform, state.history, event.task)
-                    hashes.add(event.task.hash)
                     state.save()
-                elif isinstance(event, TaskSkipEvent):
-                    hashes.add(event.task.hash)
                 reporter(event)
-            reconcile(state.history, hashes)
             state.save()
     except Exception:  # pylint: disable=broad-except
         stack_trace = traceback.format_exc()

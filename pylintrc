@@ -1,5 +1,5 @@
 [messages control]
-disable=C0111,W0621,R0903,R0915,R0914,R0913,R0912,R0201
+disable=C0111,W0621,R0903,R0915,R0914,R0913,R0912,R0201,R0205
 
 [basic]
 good-names=fp,a,b,c,d,i,j

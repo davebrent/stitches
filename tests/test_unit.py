@@ -13,13 +13,15 @@
 # You should have received a copy of the GNU General Public License
 # along with Stitches. If not, see <https://www.gnu.org/licenses/>.
 
+import hashlib
+import json
+
 import jinja2
 import pytest
 import toml
 
 from stitches import Dependency
 from stitches import TaskStatus
-from stitches import advance
 from stitches import Platform
 from stitches import load
 from stitches import analyse
@@ -29,6 +31,7 @@ class PlatformTest(Platform):
     def __init__(self):
         self.value = 0
         self.files = {}
+        self.region = {}
 
     def file_mtime(self, path):
         return self.value
@@ -38,6 +41,11 @@ class PlatformTest(Platform):
 
     def map_exists(self, type_, name):
         return True
+
+    def region_hash(self):
+        hasher = hashlib.md5()
+        hasher.update(json.dumps(self.region, sort_keys=True).encode('ascii'))
+        return hasher.hexdigest()
 
 
 class PipelineTestState(object):
@@ -100,7 +108,6 @@ def test_pipeline_trivial_skip(env):
     events = analyse(events, env.platform, env.history)
     for task in events:
         assert task.status == TaskStatus.RUN
-        advance(env.platform, env.history, task)
 
     events = load(jinja_env, {'pipeline': 'mypipeline'})
     next(events)  # Location event
@@ -120,7 +127,6 @@ def test_pipeline_root_file_change(env):
     events = analyse(events, env.platform, env.history)
     for task in events:
         assert task.status == TaskStatus.RUN
-        advance(env.platform, env.history, task)
 
     env.platform.value += 1
 
@@ -129,7 +135,6 @@ def test_pipeline_root_file_change(env):
     events = analyse(events, env.platform, env.history)
     for task in events:
         assert task.status == TaskStatus.RUN
-        advance(env.platform, env.history, task)
 
     events = load(jinja_env, {'pipeline': 'mypipeline'})
     next(events)  # Location event
@@ -153,14 +158,12 @@ def test_pipeline_root_arg_change(env):
     events = analyse(events, env.platform, env.history)
     for task in events:
         assert task.status == TaskStatus.RUN
-        advance(env.platform, env.history, task)
 
     events = load(jinja_env, {'pipeline': 'mypipeline2'})
     next(events)  # Location event
     events = analyse(events, env.platform, env.history)
     for task in events:
         assert task.status == TaskStatus.RUN
-        advance(env.platform, env.history, task)
 
     events = load(jinja_env, {'pipeline': 'mypipeline2'})
     next(events)  # Location event
@@ -184,7 +187,6 @@ def test_pipeline_non_contributing_change(env):
     events = analyse(events, env.platform, env.history)
     for task in events:
         assert task.status == TaskStatus.RUN
-        advance(env.platform, env.history, task)
 
     events = load(jinja_env, {'pipeline': 'mypipeline2'})
     next(events)  # Location event
@@ -208,7 +210,6 @@ def test_pipeline_always_task(env):
     events = analyse(events, env.platform, env.history)
     for task in events:
         assert task.status == TaskStatus.RUN
-        advance(env.platform, env.history, task)
 
     events = load(jinja_env, {'pipeline': 'mypipeline'})
     next(events)  # Location event
@@ -228,7 +229,6 @@ def test_pipeline_non_existing_output(env):
     events = analyse(events, env.platform, env.history)
     for task in events:
         assert task.status == TaskStatus.RUN
-        advance(env.platform, env.history, task)
 
     env.platform.files = {'blah.txt': False}
 

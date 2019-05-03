@@ -25,7 +25,7 @@ import sys
 import colorful
 import wurlitzer
 import toml
-from grass.script import core as gcore
+from grass.script import core as gcore  # pylint: disable=import-error
 
 
 class Error(Exception):
@@ -95,13 +95,13 @@ class SilentReporter(object):
         elif isinstance(event, TaskCompleteEvent):
             self.current_task = None
         elif isinstance(event, TaskFatalEvent):
-            lines = ['{c.red}{}{c.reset}'.format(line, c=colorful)
+            # pylint: disable=no-member
+            lines = [colorful.format('{c.red}{}{c.reset}', line)
                      for line in event.traceback.splitlines()]
             if self.current_task:
-                print('{c.bold}[{}]: {}{c.reset}'.format(
-                    self.current_task.ref,
-                    self.current_task.description,
-                    c=colorful))
+                print(colorful.format('{c.bold}[{}]: {}{c.reset}',
+                                      self.current_task.ref,
+                                      self.current_task.description))
                 lines = ['  {}'.format(line) for line in lines]
             for line in lines:
                 print(line, file=sys.stderr)
@@ -110,17 +110,17 @@ class SilentReporter(object):
 class VerboseReporter(object):
 
     def __call__(self, event):
+        # pylint: disable=no-member
         if isinstance(event, TaskStartEvent):
-            print('{c.bold}[{}]: {}{c.reset}'.format(
-                event.ref,
-                event.description,
-                c=colorful))
+            print(colorful.format('{c.bold}[{}]: {}{c.reset}',
+                                  event.ref,
+                                  event.description))
         elif isinstance(event, TaskSkipEvent):
-            print('  {c.orange}Skipped{c.reset}'.format(c=colorful))
+            print(colorful.format('  {c.orange}Skipped{c.reset}'))
         elif isinstance(event, TaskCompleteEvent):
-            print('  {c.green}Completed{c.reset}'.format(c=colorful))
+            print(colorful.format('  {c.green}Completed{c.reset}'))
         elif isinstance(event, TaskFatalEvent):
-            lines = ['  {c.red}{}{c.reset}'.format(line, c=colorful)
+            lines = [colorful.format('  {c.red}{}{c.reset}', line)
                      for line in event.traceback.splitlines()]
             for line in lines:
                 print(line, file=sys.stderr)
@@ -139,7 +139,7 @@ class Dependency(object):
             self.type = type_
             self.path = rest
 
-        elif type_ == Dependency.VECTOR or type_ == Dependency.RASTER:
+        elif type_ in (Dependency.VECTOR, Dependency.RASTER):
             components = rest.split('@', 1)
             self.type = type_
             self.name = components[0]
@@ -248,19 +248,18 @@ class StatusContext(object):
 
 def decision(test=None, true=None, false=None, result=None):
     '''A function to build up a decision tree.'''
-    if test is not None:
+    if test:
         assert true and false
     def wrapper(*args, **kwargs):
-        if test is not None:
+        if test:
             if test(*args, **kwargs):
                 return true(*args, **kwargs)
             return false(*args, **kwargs)
-        else:
-            return result
+        return result
     return wrapper
 
 
-def _is_grass_map(planner, dep):
+def _is_grass_map(_, dep):
     '''Returns true if the dependency is a grass map.'''
     return dep.type == Dependency.VECTOR or dep.type == Dependency.RASTER
 
@@ -273,7 +272,7 @@ def _grass_map_exists(planner, dep):
 def _creator_visible(planner, dep):
     '''Returns true if the creator of the map is visible in the pipeline.'''
     parent = planner.created.get(dep.fmt())
-    return False if parent is None else True
+    return not parent is None
 
 
 def _creator_changed(planner, dep):
@@ -282,7 +281,7 @@ def _creator_changed(planner, dep):
     return parent_status != TaskStatus.SKIP
 
 
-def _is_file(planner, dep):
+def _is_file(_, dep):
     '''Returns true if the dependency is a file.'''
     return dep.type == Dependency.FS
 
@@ -308,12 +307,12 @@ def _file_mtime_recent(planner, dep):
     return False
 
 
-def _task_always(planner, task):
+def _task_always(_, task):
     '''Return true if the task is marked as "always".'''
     return task.always
 
 
-_output_decision_tree = decision(
+_OUTPUT_DECISION_TREE = decision(
     test=_is_grass_map,
     true=decision(
         test=_grass_map_exists,
@@ -332,7 +331,7 @@ _output_decision_tree = decision(
 )
 
 
-_input_decision_tree = decision(
+_INPUT_DECISION_TREE = decision(
     test=_is_grass_map,
     true=decision(
         test=_grass_map_exists,
@@ -367,7 +366,7 @@ _input_decision_tree = decision(
 )
 
 
-_task_decision_tree = decision(
+_TASK_DECISION_TREE = decision(
     test=lambda p, _: p.force,
     true=decision(result=TaskStatus.RUN),
     false=decision(
@@ -400,14 +399,14 @@ _task_decision_tree = decision(
 
 def _task_status(planner, task):
     '''Return a status for a task.'''
-    status = _task_decision_tree(planner, task)
+    status = _TASK_DECISION_TREE(planner, task)
     if status:
         return status
 
     # Look at the outputs
     non_existing = []
     for dependency in task.outputs:
-        status = _output_decision_tree(planner, dependency)
+        status = _OUTPUT_DECISION_TREE(planner, dependency)
         if status != OutputStatus.EXISTS:
             non_existing.append(dependency)
     if non_existing:
@@ -427,7 +426,7 @@ def _task_status(planner, task):
     unknowns = []
     result = TaskStatus.SKIP
     for dependency in task.inputs:
-        status = _input_decision_tree(planner, dependency)
+        status = _INPUT_DECISION_TREE(planner, dependency)
         if status == InputStatus.FAIL:
             failures.append(dependency)
         elif status == InputStatus.UNKNOWN:
@@ -436,10 +435,9 @@ def _task_status(planner, task):
             result = TaskStatus.RUN
     if failures:
         return TaskStatus.FAIL
-    elif unknowns:
+    if unknowns:
         return TaskStatus.RUN
-    else:
-        return result
+    return result
 
 
 def load(jinja_env, options, gisdbase=None, location=None, mapset='PERMANENT'):

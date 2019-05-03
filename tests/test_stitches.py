@@ -21,7 +21,7 @@ import tempfile
 
 import pytest
 from grass_session import Session
-from grass.script import core as gcore
+from grass.script import core as gcore  # pylint: disable=import-error
 
 
 class Environment(object):
@@ -53,7 +53,7 @@ class Environment(object):
 @pytest.fixture
 def env(request):
     environment = Environment()
-    request.addfinalizer(lambda: environment.close())
+    request.addfinalizer(environment.close)
     return environment
 
 

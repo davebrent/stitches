@@ -72,9 +72,8 @@ class PipelineTestState(object):
 
 
 @pytest.fixture
-def env(request):
-    environment = PipelineTestState()
-    return environment
+def env():
+    return PipelineTestState()
 
 
 def test_dependency_definition():
@@ -241,7 +240,7 @@ def test_pipeline_non_existing_output(env):
         assert task.status == status
 
 
-def test_expand_pipeline(env):
+def test_expand_pipeline():
     jinja_env = jinja2.Environment(loader=jinja2.DictLoader({
         'mypipeline': '''
         [[tasks]]

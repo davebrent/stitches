@@ -15,7 +15,7 @@
 
 import subprocess
 
-from grass.pygrass.modules import Module
+from grass.pygrass.modules import Module  # pylint: disable=import-error
 
 
 def grass(params):

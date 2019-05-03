@@ -46,7 +46,6 @@ except ImportError:
     from StringIO import StringIO
 
 import docopt
-import grass_session
 import jinja2
 
 from .core import State
@@ -58,6 +57,7 @@ from .core import SilentReporter
 from .core import analyse
 from .core import load
 from .core import execute
+from ._grass import grass_session
 
 
 def main():

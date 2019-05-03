@@ -13,5 +13,12 @@
 # You should have received a copy of the GNU General Public License
 # along with Stitches. If not, see <https://www.gnu.org/licenses/>.
 
-from .cli import main
-from .core import *  # pylint: disable=wildcard-import
+# pylint: skip-file
+try:
+    import grass_session  
+    from grass.script import core as gcore
+    from grass.pygrass.modules import Module
+except RuntimeError:
+    grass_session = None
+    gcore = None
+    Module = None

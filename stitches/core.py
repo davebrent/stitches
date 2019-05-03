@@ -25,7 +25,7 @@ import sys
 import colorful
 import wurlitzer
 import toml
-from grass.script import core as gcore  # pylint: disable=import-error
+from ._grass import gcore
 
 
 class Error(Exception):

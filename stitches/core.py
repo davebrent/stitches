@@ -126,20 +126,20 @@ class VerboseReporter(object):
                 print(line, file=sys.stderr)
 
 
-class Dependency(object):
-    FS = 'fs'
+class Resource(object):
+    FILE = 'file'
     VECTOR = 'vector'
     RASTER = 'raster'
 
-    def __init__(self, spec):
-        self._spec = spec
-        (type_, rest) = spec.split('/', 1)
+    def __init__(self, ref):
+        self._ref = ref
+        (type_, rest) = ref.split('/', 1)
 
-        if type_ == Dependency.FS:
+        if type_ == Resource.FILE:
             self.type = type_
             self.path = rest
 
-        elif type_ in (Dependency.VECTOR, Dependency.RASTER):
+        elif type_ in (Resource.VECTOR, Resource.RASTER):
             components = rest.split('@', 1)
             self.type = type_
             self.name = components[0]
@@ -156,12 +156,12 @@ class Dependency(object):
                 self.gisdbase = next(rest, None)
 
             else:
-                raise Exception('Malformed GRASS name "{}"'.format(spec))
+                raise Exception('Malformed GRASS name "{}"'.format(ref))
         else:
-            raise Exception('Invalid dependency type "{}"'.format(type_))
+            raise Exception('Invalid resource type "{}"'.format(type_))
 
-    def fmt(self):
-        return self._spec
+    def ref(self):
+        return self._ref
 
 
 def _object_checksum(obj):
@@ -259,49 +259,49 @@ def decision(test=None, true=None, false=None, result=None):
     return wrapper
 
 
-def _is_grass_map(_, dep):
-    '''Returns true if the dependency is a grass map.'''
-    return dep.type == Dependency.VECTOR or dep.type == Dependency.RASTER
+def _is_grass_map(_, resource):
+    '''Returns true if the resource is a grass map.'''
+    return resource.type != Resource.FILE
 
 
-def _grass_map_exists(planner, dep):
+def _grass_map_exists(planner, resource):
     '''Returns true if the grass map exists.'''
-    return planner.platform.map_exists(dep.type, dep.name)
+    return planner.platform.map_exists(resource.type, resource.name)
 
 
-def _creator_visible(planner, dep):
+def _creator_visible(planner, resource):
     '''Returns true if the creator of the map is visible in the pipeline.'''
-    parent = planner.created.get(dep.fmt())
+    parent = planner.created.get(resource.ref())
     return not parent is None
 
 
-def _creator_changed(planner, dep):
+def _creator_changed(planner, resource):
     '''Returns true if the creator of a map has changed.'''
-    parent_status = planner.statuses[planner.created[dep.fmt()]]
+    parent_status = planner.statuses[planner.created[resource.ref()]]
     return parent_status != TaskStatus.SKIP
 
 
-def _is_file(_, dep):
-    '''Returns true if the dependency is a file.'''
-    return dep.type == Dependency.FS
+def _is_file(_, resource):
+    '''Returns true if the resource is a file.'''
+    return resource.type == Resource.FILE
 
 
-def _file_exists(planner, dep):
+def _file_exists(planner, resource):
     '''Returns true if the file exists.'''
-    return planner.platform.file_exists(dep.path)
+    return planner.platform.file_exists(resource.path)
 
 
-def _file_has_previous(planner, dep):
+def _file_has_previous(planner, resource):
     '''Returns true if the task has seen the file before.'''
     history = planner.history.get(planner.task.hash, {}).get('inputs', {})
-    return dep.fmt() in history
+    return resource.ref() in history
 
 
-def _file_mtime_recent(planner, dep):
+def _file_mtime_recent(planner, resource):
     '''Returns true if a file has been more recently modified.'''
     history = planner.history[planner.task.hash]
-    previous = history['inputs'][dep.fmt()]
-    current = planner.platform.file_mtime(dep.path)
+    previous = history['inputs'][resource.ref()]
+    current = planner.platform.file_mtime(resource.path)
     if current > previous:
         return True
     return False
@@ -405,10 +405,10 @@ def _task_status(planner, task):
 
     # Look at the outputs
     non_existing = []
-    for dependency in task.outputs:
-        status = _OUTPUT_DECISION_TREE(planner, dependency)
+    for resource in task.outputs:
+        status = _OUTPUT_DECISION_TREE(planner, resource)
         if status != OutputStatus.EXISTS:
-            non_existing.append(dependency)
+            non_existing.append(resource)
     if non_existing:
         return TaskStatus.RUN
 
@@ -425,12 +425,12 @@ def _task_status(planner, task):
     failures = []
     unknowns = []
     result = TaskStatus.SKIP
-    for dependency in task.inputs:
-        status = _INPUT_DECISION_TREE(planner, dependency)
+    for resource in task.inputs:
+        status = _INPUT_DECISION_TREE(planner, resource)
         if status == InputStatus.FAIL:
-            failures.append(dependency)
+            failures.append(resource)
         elif status == InputStatus.UNKNOWN:
-            unknowns.append(dependency)
+            unknowns.append(resource)
         elif status == InputStatus.CHANGE:
             result = TaskStatus.RUN
     if failures:
@@ -488,9 +488,9 @@ def load(jinja_env, options, gisdbase=None, location=None, mapset='PERMANENT'):
             hashable = {name: options.get(name) for name in contributing}
             hash_ = _object_checksum(hashable)
 
-            inputs = [Dependency(d) for d in options.get('inputs', [])]
-            outputs = [Dependency(d) for d in options.get('outputs', [])]
-            removes = [Dependency(d) for d in options.get('removes', [])]
+            inputs = [Resource(ref) for ref in options.get('inputs', [])]
+            outputs = [Resource(ref) for ref in options.get('outputs', [])]
+            removes = [Resource(ref) for ref in options.get('removes', [])]
 
             yield TaskEvent(options['task'],
                             pipeline=parent,
@@ -530,19 +530,19 @@ def analyse(stream, platform, history, force=None, skip=None, only=None):
         completed.add(task.hash)
 
         # Advance planner state
-        for dependency in task.outputs:
-            planner.created[dependency.fmt()] = task.ref
-        for dependency in task.removes:
-            del planner.created[dependency.fmt()]
+        for resource in task.outputs:
+            planner.created[resource.ref()] = task.ref
+        for resource in task.removes:
+            del planner.created[resource.ref()]
 
         # Update the history
         task_history = history.get(task.hash, {'inputs': {}})
         task_history['region'] = region_hash
         task_history['message'] = task.message
-        for dependency in task.inputs:
-            if dependency.type == Dependency.FS:
-                task_history['inputs'][dependency.fmt()] = platform.file_mtime(
-                    dependency.path)
+        for resource in task.inputs:
+            if resource.type == Resource.FILE:
+                task_history['inputs'][resource.ref()] = platform.file_mtime(
+                    resource.path)
         history[task.hash] = task_history
 
     # Remove previously seen keys.

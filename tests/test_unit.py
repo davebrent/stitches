@@ -20,7 +20,7 @@ import jinja2
 import pytest
 import toml
 
-from stitches import Dependency
+from stitches import Resource
 from stitches import TaskStatus
 from stitches import Platform
 from stitches import load
@@ -56,7 +56,7 @@ class PipelineTestState(object):
         self.example_file = '''
         [[tasks]]
         task = "foo"
-        inputs = ["fs/foo.txt"]
+        inputs = ["file/foo.txt"]
         outputs = ["vector/baz"]
 
         [[tasks]]
@@ -67,7 +67,7 @@ class PipelineTestState(object):
         [[tasks]]
         task = "baz"
         inputs = ["vector/foo"]
-        outputs = ["fs/blah.txt"]
+        outputs = ["file/blah.txt"]
         '''
 
 
@@ -76,24 +76,24 @@ def env():
     return PipelineTestState()
 
 
-def test_dependency_definition():
-    d = Dependency('fs/foobar/baz.tif')
-    assert (d.type, d.path) == ('fs', 'foobar/baz.tif')
+def test_resource_refs():
+    res = Resource('file/foobar/baz.tif')
+    assert (res.type, res.path) == (Resource.FILE, 'foobar/baz.tif')
 
-    d = Dependency('fs//foobar/baz.tif')
-    assert (d.type, d.path) == ('fs', '/foobar/baz.tif')
+    res = Resource('file//foobar/baz.tif')
+    assert (res.type, res.path) == (Resource.FILE, '/foobar/baz.tif')
 
-    d = Dependency('vector/mypoint@mydb/myloc/maps')
-    assert ((d.type, d.name, d.gisdbase, d.location, d.mapset) ==
-            ('vector', 'mypoint', 'mydb', 'myloc', 'maps'))
+    res = Resource('vector/mypoint@mydb/myloc/maps')
+    assert ((res.type, res.name, res.gisdbase, res.location, res.mapset) ==
+            (Resource.VECTOR, 'mypoint', 'mydb', 'myloc', 'maps'))
 
-    d = Dependency('vector/mypoint')
-    assert ((d.type, d.name, d.gisdbase, d.location, d.mapset) ==
-            ('vector', 'mypoint', None, None, None))
+    res = Resource('vector/mypoint')
+    assert ((res.type, res.name, res.gisdbase, res.location, res.mapset) ==
+            (Resource.VECTOR, 'mypoint', None, None, None))
 
-    d = Dependency('vector/mypoint@foo')
-    assert ((d.type, d.name, d.gisdbase, d.location, d.mapset) ==
-            ('vector', 'mypoint', None, None, 'foo'))
+    res = Resource('vector/mypoint@foo')
+    assert ((res.type, res.name, res.gisdbase, res.location, res.mapset) ==
+            (Resource.VECTOR, 'mypoint', None, None, 'foo'))
 
 
 def test_pipeline_trivial_skip(env):

@@ -15,7 +15,7 @@ setup(
     url='https://github.com/davebrent/stitches',
     version='0.0.1',
     license='GPLv3',
-    description='A tool for developing GIS processing pipelines with GRASS',
+    description='A task runner for GRASS GIS',
     long_description=long_description,
     packages=find_packages(exclude=['tests*']),
     entry_points={
@@ -35,6 +35,11 @@ setup(
         'pylint',
         'pytest',
     ],
+    extras_requires={
+        'docs': [
+            'sphinx_rtd_theme',
+        ]
+    },
     keywords='gis grass-gis task-runner',
     classifiers=[
         'Development Status :: 4 - Beta',

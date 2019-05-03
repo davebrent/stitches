@@ -6,3 +6,4 @@ env
 *.log
 .tox/
 __pycache__/
+docs/_build

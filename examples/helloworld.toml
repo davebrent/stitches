@@ -1,0 +1,17 @@
+# $ stitches \
+#     --verbose \
+#     --gisdbase=grassdata \
+#     --location=hello \
+#     --vars="zone=33 input=path/to/file.geojson output=world"
+
+[[tasks]]
+message = 'Modify mapsets projection to UTM zone {{ zone }}'
+task = 'grass'
+params = {module='g.proj', c=true, proj4='+proj=utm +zone={{ zone }} +datum=WGS84'}
+
+[[tasks]]
+task = 'grass'
+message = 'Import {{ input | basename }} as {{ output }}'
+inputs = ['file/{{ input }}']
+outputs = ['vector/{{ output }}']
+params = {module='v.import', input='{{ input }}', output='{{ output }}', overwrite=true}

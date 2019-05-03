@@ -19,13 +19,29 @@ from ._grass import Module
 
 
 def grass(module=None, **kwargs):
-    '''A task for calling GRASS modules.'''
+    '''Run a GRASS GIS command.
+
+    Please refer to the relevant version of `documentation`_ for
+    ``grass.pygrass.modules.Module`` for more information.
+
+    .. _documentation: https://grass.osgeo.org/grass76/manuals/libpython/pygrass_modules.html
+
+    Keyword Args:
+        module (str): GRASS GIS command name
+        **kwargs: Keyword arguments passed to ``grass.pygrass.modules.Module``
+
+    '''
     assert module
     instance = Module(module)
     instance(**kwargs)
 
 
 def script(cmd=None):
-    '''A task for running an executable.'''
+    '''Run an arbitrary shell command.
+
+    Keyword Args:
+        cmd (list): A sequence of program arguments
+
+    '''
     assert cmd
     subprocess.check_call(cmd)

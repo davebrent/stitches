@@ -13,25 +13,26 @@
 # You should have received a copy of the GNU General Public License
 # along with Stitches. If not, see <https://www.gnu.org/licenses/>.
 
-'''Stitches.
+'''
+Stitches.
 
 Usage:
   stitches [--gisdbase=<path>] [--location=<name>] [--mapset=<name>]
            [[--skip=<task>]... [--force] | --only=<task>]
            [--log=<path>] [--verbose]
-           [--vars=<vars>] <config>
+           [--vars=<vars>] <pipeline>
 
 Options:
   -h --help             Show this screen.
   -v --verbose          Show more output.
-  --log=<path>          Print GRASS's stdout at the end of run.
-  --gisdbase=<path>     Set path to the GRASS GIS Database.
-  --location=<name>     Name of GRASS location.
-  --mapset=<name>       Name of GRASS mapset.
-  --skip=<task>         Skip a task.
+  --log=<path>          Task log output path.
+  --gisdbase=<path>     Initial GRASS GIS database directory.
+  --location=<name>     Initial GRASS location.
+  --mapset=<name>       Initial GRASS Mapset.
+  --skip=<task>         Comma-separated list of tasks to skip.
   --only=<task>         Run a single task.
-  --force               Force each task to run.
-  --vars=<vars>         Variables to run the pipeline with.
+  --force               Force all tasks to run.
+  --vars=<vars>         Initial pipeline variables.
 '''
 
 from __future__ import print_function
@@ -73,14 +74,14 @@ def main():
     if args['--verbose']:
         reporter = VerboseReporter()
 
-    root = os.path.dirname(os.path.abspath(args['<config>']))
+    root = os.path.dirname(os.path.abspath(args['<pipeline>']))
     jinja_env = jinja2.Environment(loader=jinja2.FileSystemLoader(root))
     jinja_env.filters['basename'] = os.path.basename
     jinja_env.filters['dirname'] = os.path.dirname
 
     # Load the stream of tasks
     stream = load(jinja_env, {
-        'pipeline': os.path.basename(args['<config>']),
+        'pipeline': os.path.basename(args['<pipeline>']),
         'params': {
             'vars': variables,
             'gisdbase': args['--gisdbase'],

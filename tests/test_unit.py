@@ -145,7 +145,7 @@ def test_pipeline_root_file_change(env):
 def test_pipeline_root_arg_change(env):
     '''Test root task had a change of arguments.'''
     pfile = toml.loads(env.example_file)
-    pfile['tasks'][0]['args'] = 1337
+    pfile['tasks'][0]['params'] = 1337
 
     jinja_env = jinja2.Environment(loader=jinja2.DictLoader({
         'mypipeline': env.example_file,
@@ -274,7 +274,7 @@ def test_expand_pipeline():
     task_event = next(stream)
     assert task_event.ref == '0/0'
     assert task_event.task == 'foo'
-    assert task_event.args == {}
+    assert task_event.params == {}
     assert task_event.inputs == []
     assert task_event.outputs == []
 
@@ -286,6 +286,6 @@ def test_expand_pipeline():
     task_event = next(stream)
     assert task_event.ref == '1'
     assert task_event.task == 'bar'
-    assert task_event.args == {}
+    assert task_event.params == {}
     assert task_event.inputs == []
     assert task_event.outputs == []

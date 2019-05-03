@@ -81,7 +81,7 @@ def main():
     # Load the stream of tasks
     stream = load(jinja_env, {
         'pipeline': os.path.basename(args['<config>']),
-        'args': {
+        'params': {
             'vars': variables,
             'gisdbase': args['--gisdbase'],
             'location': args['--location'],

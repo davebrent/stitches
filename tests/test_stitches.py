@@ -102,11 +102,11 @@ def test_tasks_grass_import(env):
 
     [[tasks]]
     task = 'grass'
-    args = {module='g.proj', c=true, proj4='+proj=utm +zone=33 +datum=WGS84'}
+    params = {module='g.proj', c=true, proj4='+proj=utm +zone=33 +datum=WGS84'}
 
     [[tasks]]
     task = 'grass'
-    args = {module='v.import', input='tests/point.geojson', output='mypoint'}
+    params = {module='v.import', input='tests/point.geojson', output='mypoint'}
     ''')
     assert returncode == 0
     with Session(gisdb=env.gisdbase, location='foobar', mapset='PERMANENT'):
@@ -133,7 +133,7 @@ def test_tasks_script_simple(env):
 
     [[tasks]]
     task = 'script'
-    args = ['tests/myscript', 'bar']
+    params = ['tests/myscript', 'bar']
     ''')
     assert returncode == 0
 
@@ -143,7 +143,7 @@ def test_tasks_composite_pipeline(env):
     other = '''
     [[tasks]]
     task = 'grass'
-    args = {module='v.import', input='{{ in }}', output='{{ out }}'}
+    params = {module='v.import', input='{{ in }}', output='{{ out }}'}
     '''
 
     config = '''
@@ -151,11 +151,11 @@ def test_tasks_composite_pipeline(env):
 
     [[tasks]]
     task = 'grass'
-    args = {module='g.proj', c=true, proj4='+proj=utm +zone=33 +datum=WGS84'}
+    params = {module='g.proj', c=true, proj4='+proj=utm +zone=33 +datum=WGS84'}
 
     [[tasks]]
     pipeline = '{{ other }}'
-    args = {vars={in='tests/point.geojson', out='mypoint'}}
+    params = {vars={in='tests/point.geojson', out='mypoint'}}
     '''
 
     fopts = dict(mode='w', dir=env.root, prefix='config_', suffix='.toml')
@@ -179,7 +179,7 @@ def test_tasks_composite_pipeline_output(env):
     [[tasks]]
     task = 'grass'
     message = 'c'
-    args = {module='v.import', input='tests/point.geojson', output='mypoint'}
+    params = {module='v.import', input='tests/point.geojson', output='mypoint'}
     '''
 
     config = '''
@@ -188,7 +188,7 @@ def test_tasks_composite_pipeline_output(env):
     [[tasks]]
     task = 'grass'
     message = 'a'
-    args = {module='g.proj', c=true, proj4='+proj=utm +zone=33 +datum=WGS84'}
+    params = {module='g.proj', c=true, proj4='+proj=utm +zone=33 +datum=WGS84'}
 
     [[tasks]]
     pipeline = '{{ other }}'
@@ -218,7 +218,7 @@ def test_tasks_composite_pipeline_retained_state(env):
     [[tasks]]
     task = 'grass'
     message = 'c'
-    args = {module='v.import', input='tests/point.geojson', output='mypoint'}
+    params = {module='v.import', input='tests/point.geojson', output='mypoint'}
     '''
 
     config = '''
@@ -227,7 +227,7 @@ def test_tasks_composite_pipeline_retained_state(env):
     [[tasks]]
     task = 'grass'
     message = 'a'
-    args = {module='g.proj', c=true, proj4='+proj=utm +zone=33 +datum=WGS84'}
+    params = {module='g.proj', c=true, proj4='+proj=utm +zone=33 +datum=WGS84'}
 
     [[tasks]]
     pipeline = '{{ other }}'
@@ -264,7 +264,7 @@ def test_state_cleaning(env):
 
     [[tasks]]
     task = 'grass'
-    args = {module='g.proj', c=true, proj4='+proj=utm +zone=33 +datum=WGS84'}
+    params = {module='g.proj', c=true, proj4='+proj=utm +zone=33 +datum=WGS84'}
     ''')
     assert returncode == 0
 
@@ -273,7 +273,7 @@ def test_state_cleaning(env):
 
     [[tasks]]
     task = 'grass'
-    args = {module='g.proj', c=true, proj4='+proj=utm +zone=31 +datum=WGS84'}
+    params = {module='g.proj', c=true, proj4='+proj=utm +zone=31 +datum=WGS84'}
     ''')
     assert returncode == 0
 
@@ -292,7 +292,7 @@ def test_tasks_region_change(env):
     [[tasks]]
     message = 'a'
     task = 'grass'
-    [tasks.args]
+    [tasks.params]
     module = 'g.proj'
     c = true
     proj4 = '+proj=utm +zone={{ zone }} +datum=WGS84'
@@ -300,7 +300,7 @@ def test_tasks_region_change(env):
     [[tasks]]
     task = 'grass'
     message = 'b'
-    [tasks.args]
+    [tasks.params]
     module = 'v.import'
     input = 'tests/point.geojson'
     output = 'mypoint'

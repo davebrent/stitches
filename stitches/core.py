@@ -45,11 +45,11 @@ class LocationEvent(object):
 
 
 class TaskEvent(object):
-    def __init__(self, task, pipeline=None, ref=None, args=None, inputs=None,
+    def __init__(self, task, pipeline=None, ref=None, params=None, inputs=None,
                  outputs=None, removes=None, message=None, always=None,
                  status=None, hash_=None):
         self.task = task
-        self.args = args
+        self.params = params
         self.inputs = inputs
         self.outputs = outputs
         self.removes = removes
@@ -459,12 +459,12 @@ def load(jinja_env, options, gisdbase=None, location=None, mapset='PERMANENT'):
 
         if 'pipeline' in options:
             name = options.get('pipeline')
-            args = options.get('args', {})
+            params = options.get('params', {})
 
-            variables = args.get('vars', {})
-            gisdbase_ = args.get('gisdbase', gisdbase)
-            location_ = args.get('location', location)
-            mapset_ = args.get('mapset', mapset)
+            variables = params.get('vars', {})
+            gisdbase_ = params.get('gisdbase', gisdbase)
+            location_ = params.get('location', location)
+            mapset_ = params.get('mapset', mapset)
 
             template = jinja_env.get_template(name)
             config = toml.loads(template.render(variables))
@@ -484,7 +484,7 @@ def load(jinja_env, options, gisdbase=None, location=None, mapset='PERMANENT'):
                 stack.append(('config', (name, tref, task)))
 
         elif 'task' in options:
-            contributing = ['task', 'args', 'inputs', 'outputs', 'removes']
+            contributing = ['task', 'params', 'inputs', 'outputs', 'removes']
             hashable = {name: options.get(name) for name in contributing}
             hash_ = _object_checksum(hashable)
 
@@ -497,7 +497,7 @@ def load(jinja_env, options, gisdbase=None, location=None, mapset='PERMANENT'):
                             ref=ref,
                             hash_=hash_,
                             message=options.get('message', ''),
-                            args=options.get('args', {}),
+                            params=options.get('params', {}),
                             always=options.get('always', False),
                             inputs=inputs,
                             outputs=outputs,
@@ -580,5 +580,5 @@ def execute(stream, stdout, stderr):
         elif event.status == TaskStatus.RUN:
             function = _load_task(event)
             with wurlitzer.pipes(stdout=stdout, stderr=stderr):
-                function(event.args)
+                function(event.params)
             yield TaskCompleteEvent(event)

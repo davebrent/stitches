@@ -580,5 +580,5 @@ def execute(stream, stdout, stderr):
         elif event.status == TaskStatus.RUN:
             function = _load_task(event)
             with wurlitzer.pipes(stdout=stdout, stderr=stderr):
-                function(event.params)
+                function(**event.params)
             yield TaskCompleteEvent(event)

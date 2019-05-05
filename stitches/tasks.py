@@ -18,13 +18,14 @@ import subprocess
 from ._grass import Module
 
 
-def grass(params):
+def grass(module=None, **kwargs):
     '''A task for calling GRASS modules.'''
-    name = params.pop('module')
-    module = Module(name)
-    module(**params)
+    assert module
+    instance = Module(module)
+    instance(**kwargs)
 
 
-def script(params):
+def script(cmd=None):
     '''A task for running an executable.'''
-    subprocess.check_call(params)
+    assert cmd
+    subprocess.check_call(cmd)

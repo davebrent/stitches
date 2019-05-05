@@ -13,5 +13,5 @@
 # You should have received a copy of the GNU General Public License
 # along with Stitches. If not, see <https://www.gnu.org/licenses/>.
 
-def dummy_task(_):
+def dummy_task(**_):
     pass

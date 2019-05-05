@@ -133,7 +133,7 @@ def test_tasks_script_simple(env):
 
     [[tasks]]
     task = 'script'
-    params = ['tests/myscript', 'bar']
+    params = {cmd=['tests/myscript', 'bar']}
     ''')
     assert returncode == 0
 

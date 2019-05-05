@@ -75,6 +75,8 @@ def main():
 
     root = os.path.dirname(os.path.abspath(args['<config>']))
     jinja_env = jinja2.Environment(loader=jinja2.FileSystemLoader(root))
+    jinja_env.filters['basename'] = os.path.basename
+    jinja_env.filters['dirname'] = os.path.dirname
 
     # Load the stream of tasks
     stream = load(jinja_env, {

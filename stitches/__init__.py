@@ -15,3 +15,4 @@
 
 from .cli import main
 from .core import *  # pylint: disable=wildcard-import
+from .session import session

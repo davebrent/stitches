@@ -26,7 +26,6 @@ setup(
     install_requires=[
         'colorful',
         'docopt',
-        'grass-session',
         'jinja2',
         'toml',
         'wurlitzer',

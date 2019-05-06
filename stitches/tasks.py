@@ -15,8 +15,6 @@
 
 import subprocess
 
-from ._grass import Module
-
 
 def grass(module=None, **kwargs):
     '''Run a GRASS GIS command.
@@ -31,6 +29,7 @@ def grass(module=None, **kwargs):
         **kwargs: Keyword arguments passed to ``grass.pygrass.modules.Module``
 
     '''
+    from ._grass import Module
     assert module
     instance = Module(module)
     instance(**kwargs)

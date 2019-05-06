@@ -15,10 +15,10 @@
 
 # pylint: skip-file
 try:
-    import grass_session  
+    from grass.script import setup as gsetup
     from grass.script import core as gcore
     from grass.pygrass.modules import Module
-except RuntimeError:
-    grass_session = None
+except ImportError:
+    gsetup = None
     gcore = None
     Module = None

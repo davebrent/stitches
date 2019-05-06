@@ -25,7 +25,6 @@ import sys
 import colorful
 import wurlitzer
 import toml
-from ._grass import gcore
 
 
 class Error(Exception):
@@ -179,6 +178,7 @@ class Platform(object):
         return os.path.exists(path)
 
     def map_exists(self, type_, name):
+        from ._grass import gcore
         res = gcore.read_command(
             'g.list', type=type_, pattern=name).splitlines()
         if res and res[0].decode('utf-8') == name:
@@ -186,6 +186,7 @@ class Platform(object):
         return False
 
     def region_hash(self):
+        from ._grass import gcore
         return _object_checksum(gcore.region())
 
 

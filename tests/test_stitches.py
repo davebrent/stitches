@@ -20,8 +20,8 @@ import subprocess
 import tempfile
 
 import pytest
-from grass_session import Session
-from grass.script import core as gcore  # pylint: disable=import-error
+
+from stitches import session
 
 
 class Environment(object):
@@ -75,7 +75,6 @@ def test_create_default_grassdb(env):
     assert os.path.isdir(os.path.join(env.gisdbase, 'foobar', 'PERMANENT'))
 
 
-@pytest.mark.skip(reason='should this case be supported?')
 def test_create_named_mapset(env):
     '''A pipeline should use the specified mapset.'''
     returncode, _, _ = env.run(['--log', os.devnull], '''
@@ -109,7 +108,8 @@ def test_tasks_grass_import(env):
     params = {module='v.import', input='tests/point.geojson', output='mypoint'}
     ''')
     assert returncode == 0
-    with Session(gisdb=env.gisdbase, location='foobar', mapset='PERMANENT'):
+    with session(env.gisdbase, 'foobar', mapset='PERMANENT'):
+        from stitches._grass import gcore
         maps = gcore.read_command(
             'g.list', type='vector', pattern='mypoint').splitlines()
         assert maps[0].decode('utf-8') == 'mypoint'
@@ -167,7 +167,8 @@ def test_tasks_composite_pipeline(env):
             'other={}'.format(os.path.basename(fp.name))
         ], config)
     assert returncode == 0
-    with Session(gisdb=env.gisdbase, location='foobar'):
+    with session(env.gisdbase, 'foobar'):
+        from stitches._grass import gcore
         maps = gcore.read_command(
             'g.list', type='vector', pattern='mypoint').splitlines()
         assert maps[0].decode('utf-8') == 'mypoint'

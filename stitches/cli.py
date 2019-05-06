@@ -58,7 +58,7 @@ from .core import SilentReporter
 from .core import analyse
 from .core import load
 from .core import execute
-from ._grass import grass_session
+from .session import session
 
 
 def main():
@@ -111,12 +111,8 @@ def main():
 
     (code, stdout, stderr) = (0, StringIO(), StringIO())
     try:
-        # Create opts needs to be not None, to create the location when it does
-        # not already exist.
-        with grass_session.Session(gisdb=gisdbase,
-                                   location=location,
-                                   mapset=mapset,
-                                   create_opts=''):
+        os.environ['GRASS_MESSAGE_FORMAT'] = 'plain'
+        with session(gisdbase, location, mapset=mapset):
             for event in execute(stream, stdout, stderr):
                 if isinstance(event, TaskCompleteEvent):
                     state.save()

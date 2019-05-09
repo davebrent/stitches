@@ -38,6 +38,7 @@ Options:
 from __future__ import print_function
 
 import datetime
+import itertools
 import os
 import sys
 import traceback
@@ -53,6 +54,7 @@ from .core import State
 from .core import Platform
 from .core import TaskFatalEvent
 from .core import TaskCompleteEvent
+from .core import LocationEvent
 from .core import VerboseReporter
 from .core import SilentReporter
 from .core import analyse
@@ -90,11 +92,23 @@ def main():
         }
     })
 
-    # First event in the stream must be a location event
-    head = next(stream)
-    gisdbase = head.gisdbase
-    location = head.location
-    mapset = head.mapset
+    session_exists = bool(os.environ.get('GISRC'))
+
+    # Check the first item in the stream for a location event
+    event = next(stream, None)
+    if isinstance(event, LocationEvent):
+        gisdbase = event.gisdbase
+        location = event.location
+        mapset = event.mapset
+    else:
+        stream = itertools.chain(iter([event]), stream)
+
+    if session_exists:
+        from ._grass import gcore
+        env = gcore.gisenv()
+        gisdbase = gisdbase or env['GISDBASE']
+        location = location or env['LOCATION_NAME']
+        mapset = mapset or env['MAPSET']
 
     # Load previous state
     state = State.load(os.path.join(
@@ -112,7 +126,7 @@ def main():
     (code, stdout, stderr) = (0, StringIO(), StringIO())
     try:
         os.environ['GRASS_MESSAGE_FORMAT'] = 'plain'
-        with session(gisdbase, location, mapset=mapset):
+        with session(gisdbase, location, mapset=mapset, skip=session_exists):
             for event in execute(stream, stdout, stderr):
                 if isinstance(event, TaskCompleteEvent):
                     state.save()

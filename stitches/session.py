@@ -57,7 +57,11 @@ def _grass_install_dir(grassbin):
 
 @contextlib.contextmanager
 def session(gisdbase, location, mapset=None, c=None, version=None,
-            grassbin=None, gisbase=None):
+            grassbin=None, gisbase=None, skip=None):
+    if skip:
+        yield
+        return
+
     grassbin = grassbin if grassbin else _grass_binary(version=version)
     gisbase = gisbase if gisbase else _grass_install_dir(grassbin)
 

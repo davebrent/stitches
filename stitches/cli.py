@@ -19,13 +19,14 @@ Stitches.
 Usage:
   stitches [--gisdbase=<path>] [--location=<name>] [--mapset=<name>]
            [[--skip=<task>]... [--force] | --only=<task>]
-           [--log=<path>] [--verbose]
+           [--log=<path>] [--verbose] [--nocolor]
            [--vars=<vars>] <pipeline>
 
 Options:
   -h --help             Show this screen.
   -v --verbose          Show more output.
   --log=<path>          Task log output path.
+  --nocolor             Disable colorized output.
   --gisdbase=<path>     Initial GRASS GIS database directory.
   --location=<name>     Initial GRASS location.
   --mapset=<name>       Initial GRASS Mapset.
@@ -47,6 +48,7 @@ try:
 except ImportError:
     from StringIO import StringIO
 
+import colorful
 import docopt
 import jinja2
 
@@ -75,6 +77,8 @@ def main():
     reporter = SilentReporter()
     if args['--verbose']:
         reporter = VerboseReporter()
+    if args['--nocolor']:
+        colorful.disable()  # pylint: disable=no-member
 
     root = os.path.dirname(os.path.abspath(args['<pipeline>']))
     jinja_env = jinja2.Environment(loader=jinja2.FileSystemLoader(root))

@@ -124,7 +124,7 @@ def main():
     # Analyse the stream of events with the previous state
     stream = analyse(stream, platform, state.history,
                      force=args['--force'],
-                     skip=args['--skip'],
+                     skip=[a for a in (args['--skip'] or '').split(',') if a],
                      only=args['--only'])
 
     (code, stdout, stderr) = (0, StringIO(), StringIO())

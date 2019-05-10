@@ -13,7 +13,7 @@ setup(
     author='Dave Poulter',
     author_email='hello@davepoulter.net',
     url='https://github.com/davebrent/stitches',
-    version='0.0.1',
+    version='1.0.0',
     license='GPLv3',
     description='A task runner for GRASS GIS',
     long_description=long_description,

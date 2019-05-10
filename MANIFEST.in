@@ -1,0 +1,3 @@
+include tests/myscript
+include tests/*.geojson
+include examples/*.toml
